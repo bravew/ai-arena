@@ -1,0 +1,12 @@
+id: smoke.release-note
+version: 1
+kind: content
+prompt_file: prompt.md
+scorers:
+  - id: constraints
+    weight: 1.0
+    gate: true
+    min_words: 40
+    max_words: 150
+    must_include: ["version 2.0", "upgrade"]
+pairwise: true

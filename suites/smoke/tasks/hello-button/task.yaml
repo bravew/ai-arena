@@ -1,0 +1,10 @@
+id: smoke.hello-button
+version: 1
+kind: web-artifact
+prompt_file: prompt.md
+scorers:
+  - id: constraints
+    weight: 1.0
+    gate: true
+    must_include: ["<button", "<h1", "<script"]
+pairwise: true
