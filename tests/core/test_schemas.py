@@ -64,9 +64,7 @@ def test_events_fixture_validates_all_event_kinds_included() -> None:
 def test_each_extended_event_payload_validates(kind: str) -> None:
     contents = (ROOT / "fixtures/events/events.jsonl").read_text(encoding="utf-8")
     event = next(
-        json.loads(line)
-        for line in contents.splitlines()
-        if json.loads(line)["kind"] == kind
+        json.loads(line) for line in contents.splitlines() if json.loads(line)["kind"] == kind
     )
     validate_event(event)
 
