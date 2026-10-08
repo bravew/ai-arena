@@ -1,0 +1,29 @@
+{
+  "bundle_version": 1,
+  "run": {"id": "run-schema-001", "suite_id": "smoke", "started_at": "2026-10-08T10:00:00Z", "ended_at": "2026-10-08T10:01:00Z", "status": "succeeded"},
+  "contestants": [
+    {"id": "c-ablation-base", "label": "OpenCode · no kit", "model": "mock/echo", "params": {}, "scaffold": {"id": "opencode", "version": "1.2.0", "settings": {}}, "scaffold_prompt": "native", "kit_hash": "none", "orchestration": "single", "prompt_version": null, "hooks": []},
+    {"id": "c-ablation-kit", "label": "OpenCode · team kit", "model": "mock/echo", "params": {}, "scaffold": {"id": "opencode", "version": "1.2.0", "settings": {}}, "scaffold_prompt": "native", "kit_hash": "sha256:kit-v3", "orchestration": "single", "prompt_version": null, "hooks": []},
+    {"id": "c-subscription", "label": "Claude Code · subscription", "model": "anthropic/claude-opus-5-5", "params": {}, "scaffold": {"id": "claude-code", "version": "2.4.1", "settings": {}}, "scaffold_prompt": "native", "kit_hash": "none", "orchestration": "single", "prompt_version": null, "hooks": []}
+  ],
+  "trials": [
+    {"id": "trial-base", "run_id": "run-schema-001", "contestant_id": "c-ablation-base", "task_id": "smoke.echo", "attempt": 1, "status": "succeeded", "error_class": null, "flags": {"unmetered": false, "swapped": false, "subscription_served": false, "kit_unapplied": false}, "started_at": "2026-10-08T10:00:01Z", "ended_at": "2026-10-08T10:00:10Z"},
+    {"id": "trial-kit", "run_id": "run-schema-001", "contestant_id": "c-ablation-kit", "task_id": "smoke.echo", "attempt": 1, "status": "succeeded", "error_class": null, "flags": {"unmetered": false, "swapped": false, "subscription_served": false, "kit_unapplied": false}, "started_at": "2026-10-08T10:00:11Z", "ended_at": "2026-10-08T10:00:20Z"},
+    {"id": "trial-sub", "run_id": "run-schema-001", "contestant_id": "c-subscription", "task_id": "smoke.echo", "attempt": 1, "status": "succeeded", "error_class": null, "flags": {"unmetered": false, "swapped": false, "subscription_served": true, "kit_unapplied": false}, "started_at": "2026-10-08T10:00:21Z", "ended_at": "2026-10-08T10:00:30Z"}
+  ],
+  "calls": [
+    {"id": "call-sub", "seq": 1, "run_id": "run-schema-001", "trial_id": "trial-sub", "span_id": null, "parent_span_id": null, "purpose": "contestant", "protocol_in": "anthropic", "protocol_out": "anthropic", "translated": false, "provider": "anthropic-max", "account_id": "acct-hash-01", "model_asked": "claude-opus-5-5", "model_served": "claude-opus-5-5", "swapped": false, "upstream": null, "effort_asked": null, "effort_applied": null, "tries": [{"account_id": "acct-hash-01", "status": 200, "error_class": null, "rest_ms": 0, "ms": 812}], "status": 200, "error_class": null, "tokens": {"in": 120, "out": 32, "reasoning": 0, "cache_read": 0, "cache_write": 0}, "cost_usd": null, "price_version": null, "queue_ms": 0, "ttft_ms": 310, "first_text_ms": 320, "total_ms": 812, "cache": "off", "prompt_parts": [{"kind": "conversation", "tokens": 120}]}
+  ],
+  "scores": [
+    {"trial_id": "trial-base", "scorer_id": "smoke-output", "scorer_version": "1", "value": 1, "normalized": 1, "passed": true, "rationale": "Expected output produced.", "evidence": {"artifact": "artifact-output"}}
+  ],
+  "sessions": [
+    {"id": "session-kit", "trial_id": "trial-kit", "parent_session_id": null, "agent": "opencode", "native_session_id": "native-001", "started_at": "2026-10-08T10:00:11Z", "ended_at": "2026-10-08T10:00:20Z", "status": "succeeded", "turns": [{"call_ids": [], "tool_calls": [{"name": "read_file", "args_digest": "sha256:args", "result_size": 128, "duration_ms": 4, "exit_status": 0}], "skill_events": [{"kind": "loaded", "skill": "house-style", "kit_hash": "sha256:kit-v3"}], "mcp_calls": [{"server": "repo-tools", "tool": "inspect", "duration_ms": 12, "status": "ok"}], "files": [{"path": "answer.txt", "added": 1, "removed": 0}], "unmetered": false}]}
+  ],
+  "kit_installs": [
+    {"trial_id": "trial-kit", "kit_hash": "sha256:kit-v3", "written": [{"path": ".config/opencode/AGENTS.md", "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}], "refused": []}
+  ],
+  "artifacts": [
+    {"sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", "path": "artifacts/bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", "mime": "text/plain", "render_hint": "code"}
+  ]
+}
