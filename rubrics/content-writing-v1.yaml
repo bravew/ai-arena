@@ -1,0 +1,20 @@
+id: content-writing
+version: 1
+kind: content
+anchors:
+  accuracy:
+    0: Invents or contradicts important facts.
+    1: Mostly accurate but omits or distorts a key constraint.
+    2: Preserves supplied facts and clearly marks uncertainty.
+  task_fulfillment:
+    0: Misses the requested format or essential sections.
+    1: Meets the format with a notable omission.
+    2: Includes all requested sections and audience needs.
+  clarity_and_style:
+    0: Hard to follow or mismatched to the audience.
+    1: Understandable with uneven organization or tone.
+    2: Clear, concise, well-structured, and audience-appropriate.
+  usefulness:
+    0: Gives the reader no actionable value.
+    1: Provides some useful information but lacks specificity.
+    2: Gives concrete, relevant information and a suitable next step.
