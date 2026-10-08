@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 from collections.abc import Mapping, Sequence
 from pathlib import Path
@@ -57,14 +58,16 @@ def score_run(
         ).fetchall()
         artifacts: dict[str, Any] = {}
         for artifact in artifact_rows:
-            path = artifact_root / str(artifact["sha256"])
+            digest = str(artifact["sha256"])
+            path = artifact_root / digest
             if not path.is_file():
-                raise ScorerError(f"missing stored artifact {artifact['sha256']} for trial {trial_id}")
+                raise ScorerError(f"missing stored artifact {digest} for trial {trial_id}")
+            _verify_artifact(path, digest, trial_id)
             artifacts[str(artifact["path"])] = {
                 "path": path,
                 "mime": str(artifact["mime"]),
                 "render_hint": str(artifact["render_hint"]),
-                "sha256": str(artifact["sha256"]),
+                "sha256": digest,
             }
 
         context = ScorerContext(trial_id=trial_id, artifacts=artifacts)
@@ -73,6 +76,15 @@ def score_run(
             _save_score(store, score)
             results.append(score)
     return results
+
+
+def _verify_artifact(path: Path, digest: str, trial_id: str) -> None:
+    try:
+        data = path.read_bytes()
+    except OSError as exc:
+        raise ScorerError(f"cannot read artifact {digest} for trial {trial_id}: {exc}") from exc
+    if hashlib.sha256(data).hexdigest() != digest:
+        raise ScorerError(f"artifact {digest} for trial {trial_id} does not match its digest")
 
 
 def _save_score(store: Store, score: Score) -> None:

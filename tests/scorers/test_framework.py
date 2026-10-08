@@ -165,3 +165,37 @@ def test_score_command_missing_artifact_is_an_error(tmp_path: Path) -> None:
     assert result.exit_code != 0
     assert isinstance(result.exception, ScorerError)
     assert "missing stored artifact" in str(result.exception)
+
+
+def test_score_command_rejects_corrupt_artifact_content(tmp_path: Path) -> None:
+    db_path = tmp_path / "arena.db"
+    artifact_root = tmp_path / "artifacts"
+    artifact_root.mkdir()
+    artifact_bytes = b"saved trial output"
+    digest = hashlib.sha256(artifact_bytes).hexdigest()
+    (artifact_root / digest).write_bytes(b"tampered content")
+    registry = ScorerRegistry([FixedScorer()])
+    with Store(db_path) as store:
+        store.execute(
+            "INSERT INTO runs (id, config_json, status) VALUES (?, ?, ?)",
+            ("run-1", '{"scorers":["quality@1"]}', "finished"),
+        )
+        store.execute(
+            "INSERT INTO trials (id, run_id, contestant_id, task_id, status) VALUES (?, ?, ?, ?, ?)",
+            ("trial-1", "run-1", "contestant", "task", "succeeded"),
+        )
+        store.execute(
+            "CREATE TABLE artifacts (trial_id TEXT NOT NULL, path TEXT NOT NULL, mime TEXT NOT NULL, "
+            "render_hint TEXT NOT NULL, sha256 TEXT NOT NULL, PRIMARY KEY (trial_id, path))"
+        )
+        store.execute(
+            "INSERT INTO artifacts VALUES (?, ?, ?, ?, ?)",
+            ("trial-1", "answer.txt", "text/plain", "code", digest),
+        )
+        command = create_score_command(registry, db_path, artifact_root)
+        result = CliRunner().invoke(command, ["run-1"])
+    assert result.exit_code != 0
+    assert isinstance(result.exception, ScorerError)
+    assert "does not match its digest" in str(result.exception)
+    with Store(db_path) as store:
+        assert store.execute("SELECT COUNT(*) FROM scores").fetchone()[0] == 0
