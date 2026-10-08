@@ -13,7 +13,7 @@ they describe.
 | Page | Subsystem |
 | --- | --- |
 | `gateway.md` (planned) | The gateway: protocols, plan, lanes, rests, cache, cassettes, hooks, redaction |
-| `providers-catalog.md` (planned) | Provider config, key resolution, and the model catalog |
+| [`providers-catalog.md`](providers-catalog.md) | Provider config, key resolution, and the model catalog |
 | `agent-adapters.md` (planned) | One adapter per agent CLI: wiring, kit install, sessions |
 | `runners-sandbox.md` (planned) | Runners, the scheduler, and the Docker sandbox |
 | `scoring.md` (planned) | Deterministic scorers and LLM judges |
