@@ -1,0 +1,24 @@
+id: web-artifact
+version: 1
+kind: web-artifact
+anchors:
+  brief_fulfillment:
+    0: The artifact does not implement the requested experience.
+    1: Core intent is present but a major requirement is missing.
+    2: All essential requirements are implemented.
+  usability:
+    0: Primary content or controls are confusing or unusable.
+    1: Main path works with some friction or unclear states.
+    2: Hierarchy and interaction states make the main path clear.
+  accessibility:
+    0: Key content or controls lack usable names or semantics.
+    1: Most controls are accessible, with a notable gap.
+    2: Semantic structure, labels, contrast, and keyboard use support access.
+  responsive_quality:
+    0: Layout breaks at narrow or wide viewports.
+    1: Layout adapts but has a significant presentation issue.
+    2: Layout remains readable and usable across viewport sizes.
+  craft:
+    0: Incomplete, inconsistent, or visibly broken output.
+    1: Coherent output with rough or inconsistent details.
+    2: Deliberate visual hierarchy and consistent, finished details.
