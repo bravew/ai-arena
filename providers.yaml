@@ -1,0 +1,23 @@
+# Committed providers contain environment variable names only, never secret values.
+providers:
+  - id: mock
+    kind: mock
+  - id: replay
+    kind: cassette
+  - id: anthropic
+    apis: {anthropic: https://api.anthropic.com}
+    keys: [{id: main, env: ANTHROPIC_API_KEY}]
+    key_routing: order
+    limits: {concurrency: 8, rpm: 50, queue: 64}
+  - id: openai
+    apis: {responses: https://api.openai.com/v1, chat: https://api.openai.com/v1}
+    keys: [{id: main, env: OPENAI_API_KEY}]
+    limits: {concurrency: 16}
+  - id: anthropic-max
+    apis: {anthropic: https://api.anthropic.com}
+    keys: []
+    subscription:
+      vendor: claude
+      plan: max
+      import: own-sign-in
+    limits: {concurrency: 2}
