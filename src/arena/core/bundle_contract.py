@@ -25,8 +25,15 @@ def _load_validator(schema_name: str) -> Draft202012Validator:
 
 
 def validate_bundle(bundle: dict[str, Any]) -> None:
-    """Raise ``ValidationError`` unless *bundle* conforms to bundle-schema.json."""
-    validator = cast(Any, _load_validator("bundle-schema.json"))
+    """Validate a v1 or v2 report bundle using its versioned schema."""
+    version = bundle.get("bundle_version")
+    if type(version) is int and version == 1:
+        schema_name = "bundle-schema-v1.json"
+    elif version == 2:
+        schema_name = "bundle-schema.json"
+    else:
+        raise ValueError(f"Unsupported bundle version: {version!r}")
+    validator = cast(Any, _load_validator(schema_name))
     validator.validate(bundle)
 
 

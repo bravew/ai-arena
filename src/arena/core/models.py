@@ -270,6 +270,15 @@ class Artifact(Frozen):
     path: str
     mime: str
     render_hint: RenderHint
+    trial_id: str | None = None
+
+
+class RunProvenance(Frozen):
+    origin: Literal["native", "imported"] = "native"
+    verification: Literal["verified", "unverified"] = "verified"
+    importer: str | None = None
+    importer_version: str | None = None
+    source_ref: str | None = None
 
 
 class Score(Frozen):
