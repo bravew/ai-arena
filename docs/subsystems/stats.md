@@ -11,6 +11,10 @@
 | Bradley-Terry ratings | Fit per-judge strengths, bootstrap deterministic intervals, and expose disconnected comparison components | [`bradley_terry`, `Ratings`, `Rating`](../../src/arena/stats/ratings.py) |
 | Pareto frontier | Keep non-dominated quality/resource choices, preserving coordinate ties and using tokens/task when any cost is flat or unknown | [`pareto_frontier`, `ParetoPoint`](../../src/arena/stats/pareto.py) |
 | Cluster bootstrap | Resample tasks and repeats within sampled tasks and calculate a percentile interval with a deterministic seed | [`cluster_bootstrap_ci`](../../src/arena/stats/bootstrap.py) |
+| Run diff | Compare shared eligible task repeats; estimate and interval use the same attempt pairs, and fewer than two pairs are uncertain; report additions, removals, cost delta, and changed contestants | [`diff_runs`](../../src/arena/stats/rundiff.py) |
+| Chart series | Precompute attributed usage, latency distributions, and prompt composition; calls without a known trial are omitted | [`chart_series`](../../src/arena/stats/series.py) |
+| Session summaries | Summarize linked turns, tools, tokens, costs, duration and files by contestant, agent, model and kit; a missing trial record or incomplete call linkage remains explicitly partial/unknown | [`summarize_sessions`](../../src/arena/stats/sessions.py) |
+| Judge calibration | Compare available human labels, order swaps, output lengths, contestant families, and costs for explicitly linked judge call IDs; absent linkage or call records leaves cost unavailable | [`calibration_report`](../../src/arena/stats/judge_calibration.py) |
 
 ## Runtime path
 
