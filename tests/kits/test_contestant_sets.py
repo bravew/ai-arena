@@ -13,19 +13,17 @@ SETS = ROOT / "contestants" / "sets"
 KIT_MANIFEST = ROOT / "kits" / "team-coding" / "kit.yaml"
 
 
-def read_matrix(name: str, kit_hash: str) -> dict[str, Any]:
+def read_matrix(name: str) -> dict[str, Any]:
     raw: Any = yaml.safe_load((SETS / name).read_text(encoding="utf-8"))
     assert isinstance(raw, dict)
-    config = cast(dict[str, Any], raw)
-    config["kits"] = {"kits/team-coding@3": kit_hash}
-    return config
+    return cast(dict[str, Any], raw)
 
 
 def test_contestant_sets_have_expected_counts_and_unique_ids() -> None:
     kit_hash = load_kit(KIT_MANIFEST).hash
-    model_axis = expand_matrix(read_matrix("model-axis.yaml", kit_hash))
-    product_axis = expand_matrix(read_matrix("product-axis.yaml", kit_hash))
-    ablation = expand_matrix(read_matrix("ablation.yaml", kit_hash))
+    model_axis = expand_matrix(read_matrix("model-axis.yaml"))
+    product_axis = expand_matrix(read_matrix("product-axis.yaml"))
+    ablation = expand_matrix(read_matrix("ablation.yaml"))
 
     assert len(model_axis) == 8
     assert len({contestant.id for contestant in model_axis}) == 8
