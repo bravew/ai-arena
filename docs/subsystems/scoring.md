@@ -185,3 +185,32 @@ uv run pytest tests/scorers/test_constraint.py tests/scorers/test_reference.py
 ```sh
 uv run pytest tests/judges/test_rubric.py
 ```
+
+## Pairwise judge
+
+### Responsibilities and sources of truth
+
+| Part | Responsibility | Source |
+| --- | --- | --- |
+| Pairwise judgment | Compares two stored text artifacts in both orders and returns a row keyed by Trial A, Trial B, task and judge version. A position-dependent flip is a tie with both rationales retained. | [`PairwiseJudge`, `Judgment`](../../src/arena/judges/pairwise.py) |
+| Visual pairwise judge | Reads screenshot artifact paths from each trial context and sends screenshot bytes as multimodal content in both orders against a design rubric. It adapts image blocks for the transport's OpenAI or Anthropic wire protocol. | [`VisualJudge`](../../src/arena/judges/visual.py) |
+| Judge transport | Uses the shared injectable transport and the run's `arena-judge-<run_id>` token. Tests use an in-process fake; no provider is called directly. | [`JudgeTransport`, `judge_request`](../../src/arena/judges/client.py) |
+
+### Runtime path
+
+1. `PairwiseJudge` reads each trial's configured answer artifact through `ScorerContext.read`, then asks the injected transport for a structured winner/tie verdict in original and swapped order.
+2. A stable winner is mapped back to Trial A or Trial B. A changed verdict under swapping becomes a tie and is marked as position bias in the judgment evidence.
+3. `VisualJudge` resolves the configured screenshot path in each context, reads the content-addressed bytes, and performs the same two-order comparison with image payloads and a design rubric.
+
+### Constraints and failure behavior
+
+- Each verdict must be strict JSON with exactly `winner` (`a`, `b` or `tie`) and a non-empty rationale. Invalid, missing or extra fields raise `MalformedPairwiseVerdictError`; transport and artifact failures also abort without returning a judgment.
+- A judge preferring position A or B irrespective of the submission yields a tie after the swap. Evidence keeps both positional verdicts and rationales so position bias is inspectable.
+- Visual judging requires an existing image artifact path per trial. Missing paths, non-image artifacts and unreadable blobs raise `ScorerError`.
+- Tests inject a fake transport. No live provider or gateway call is made by this implementation's test suite.
+
+### Verification
+
+```sh
+uv run pytest tests/judges/test_pairwise.py
+```
