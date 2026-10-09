@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useState } from 'react';
 import type { Call } from '../../lib/schema';
 import { fixtureOps, type OpsDataSource, type UsagePoint } from './fixtures';
 import './ops.css';
@@ -14,7 +14,8 @@ export function OpsView({ source = fixtureOps }: { source?: OpsDataSource }) {
     return () => window.clearInterval(timer);
   }, []);
   const calls = source.calls();
-  const filtered = useMemo(() => calls.filter((call) => (!provider || call.provider.includes(provider)) && (!status || String(call.status ?? 'pending') === status) && (!search || `${call.id} ${call.model_asked} ${call.account_id}`.toLowerCase().includes(search.toLowerCase()))), [calls, provider, search, status]);
+  const statuses = [...new Set(calls.map((call) => call.status === null ? call.error_class ?? 'pending' : String(call.status)))].sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
+  const filtered = calls.filter((call) => (!provider || call.provider.toLowerCase().includes(provider.toLowerCase())) && (!status || (call.status === null ? call.error_class ?? 'pending' : String(call.status)) === status) && (!search || `${call.id} ${call.model_asked} ${call.account_id}`.toLowerCase().includes(search.toLowerCase())));
   const usage = source.usage();
   const lanes = source.lanes();
   const nowSeconds = now / 1000;
@@ -28,7 +29,7 @@ export function OpsView({ source = fixtureOps }: { source?: OpsDataSource }) {
       <div className="ops-heading"><div><div className="eyebrow">GATEWAY · CALLS</div><h2 id="ops-ledger-title">Calls ledger</h2><p>Per-call attribution, token use, status and latency.</p></div><span className="count-pill">{filtered.length} / {calls.length} calls</span></div>
       <div className="ops-filters">
         <label>Provider<input aria-label="Filter by provider" value={provider} onChange={(e) => setProvider(e.target.value)} placeholder="All providers" /></label>
-        <div className="status-filter"><span>Status</span><button type="button" className="status-filter-trigger" aria-label="Filter by status" aria-expanded={statusMenuOpen} onClick={() => setStatusMenuOpen((open) => !open)}>{status || 'All statuses'} <span aria-hidden="true">⌄</span></button>{statusMenuOpen && <div className="status-filter-options" role="group" aria-label="Status options">{[['', 'All statuses'], ['200', '200'], ['429', '429'], ['pending', 'pending']].map(([value, label]) => <button key={value} type="button" aria-pressed={status === value} onClick={() => { setStatus(value!); setStatusMenuOpen(false); }}>{label}</button>)}</div>}</div>
+        <div className="status-filter"><span>Status</span><button type="button" className="status-filter-trigger" aria-label="Filter by status" aria-expanded={statusMenuOpen} onClick={() => setStatusMenuOpen((open) => !open)}>{status || 'All statuses'} <span aria-hidden="true">⌄</span></button>{statusMenuOpen && <div className="status-filter-options" role="group" aria-label="Status options">{[['', 'All statuses'], ...statuses.map((value) => [value, value])].map(([value, label]) => <button key={value} type="button" aria-pressed={status === value} onClick={() => { setStatus(value!); setStatusMenuOpen(false); }}>{label}</button>)}</div>}</div>
         <label>Search<input aria-label="Search calls" value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Model, call or account" /></label>
       </div>
       <div className="table-wrap"><table className="ops-table" aria-label="Calls ledger"><thead><tr><th>Seq</th><th>Provider / account</th><th>Model</th><th>Status</th><th>Tokens · in / out</th><th>Cost</th><th>Queue</th><th>Latency</th></tr></thead><tbody>{filtered.map((call) => <CallRow key={call.id} call={call} />)}{filtered.length === 0 && <tr><td colSpan={8} className="empty-row">No calls match these filters.</td></tr>}</tbody></table></div>
