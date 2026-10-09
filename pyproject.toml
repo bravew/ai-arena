@@ -9,7 +9,10 @@ dependencies = [
     "jsonschema>=4.25",
     "pydantic>=2.11",
     "PyYAML>=6.0",
+    "starlette>=1.7.0",
     "typer>=0.16",
+    "uvicorn>=0.54.0",
+    "zstandard>=0.25.0",
 ]
 
 [project.scripts]
@@ -20,6 +23,7 @@ dev = [
     "pytest>=8.4",
     "pyright>=1.1.400",
     "ruff>=0.12",
+    "httpx>=0.28.1",
 ]
 
 [build-system]
