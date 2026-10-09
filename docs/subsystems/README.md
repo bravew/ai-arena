@@ -15,7 +15,7 @@ they describe.
 | `gateway.md` (planned) | The gateway: protocols, plan, lanes, rests, cache, cassettes, hooks, redaction |
 | [`providers-catalog.md`](providers-catalog.md) | Provider config, key resolution, and the model catalog |
 | `agent-adapters.md` (planned) | One adapter per agent CLI: wiring, kit install, sessions |
-| `runners-sandbox.md` (planned) | Runners, the scheduler, and the Docker sandbox |
+| [`runners-sandbox.md`](runners-sandbox.md) | Runners, scheduler, and the gateway-only Docker sandbox |
 | `scoring.md` (planned) | Deterministic scorers and LLM judges |
 | `stats.md` (planned) | Aggregation, bootstrap, ratings, Pareto, run-diff |
 | `observability.md` (planned) | Calls ledger, event stream, spans, metrics |
