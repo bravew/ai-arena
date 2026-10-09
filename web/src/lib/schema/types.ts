@@ -140,7 +140,16 @@ export interface KitInstall {
   refused: { item: string; reason: string }[];
 }
 
+export interface Provenance {
+  origin: 'native' | 'imported';
+  verification: 'verified' | 'unverified';
+  importer?: string | null;
+  importer_version?: string | null;
+  source_ref?: string | null;
+}
+
 export interface Artifact {
+  trial_id?: string;
   sha256: string;
   path: string;
   mime: string;
@@ -148,7 +157,8 @@ export interface Artifact {
 }
 
 export interface Bundle {
-  bundle_version: 1;
+  bundle_version: 1 | 2;
+  provenance?: Provenance;
   run: Run;
   contestants: Contestant[];
   trials: Trial[];
