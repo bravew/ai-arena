@@ -1,0 +1,22 @@
+import pytest
+
+from calc import clamp, mean
+
+
+def test_mean_basic():
+    assert mean([1, 2]) == 1.5
+
+
+def test_mean_negative():
+    assert mean([-1, -2]) == -1.5
+
+
+def test_mean_empty_raises():
+    with pytest.raises(ValueError):
+        mean([])
+
+
+def test_clamp_bounds():
+    assert clamp(5, 0, 3) == 3
+    assert clamp(-5, 0, 3) == 0
+    assert clamp(2, 0, 3) == 2
