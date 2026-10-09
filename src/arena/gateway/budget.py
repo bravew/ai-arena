@@ -134,13 +134,13 @@ class Budget:
             if final_cost_usd is None:
                 del self._reserved[call.id]
                 return
+            del self._reserved[call.id]
+            self._metered_spend += final_cost_usd
             if final_cost_usd > reserved_amount:
                 raise BudgetExceeded(
                     f"actual charge ${final_cost_usd:.6f} exceeded "
                     f"reserved amount ${reserved_amount:.6f}"
                 )
-            del self._reserved[call.id]
-            self._metered_spend += final_cost_usd
 
     async def record_call(self, call: Call, events: EventLog) -> None:
         """Reserve and settle immediately for callers without a separate dispatch phase."""
