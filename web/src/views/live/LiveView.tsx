@@ -185,4 +185,3 @@ function useReducedMotion(): boolean {
   }, []);
   return reduced;
 }
-

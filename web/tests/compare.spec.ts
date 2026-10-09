@@ -22,4 +22,3 @@ test('URL parameters cannot select a different bundle or inject run data', async
   await expect(page.getByText('Injected', { exact: true })).toHaveCount(0);
   await expect(page.getByLabel('Run A')).toHaveCount(0);
 });
-

@@ -6,9 +6,9 @@ change, then follow its source links to check the code.
 
 ## Pages
 
-None of these exist yet. They are planned in
-[DEV_PLAN §11](../DEV_PLAN.md#repository-layout) and are added with the code
-they describe.
+Subsystem references are added alongside the code they describe. The viewer
+reference covers Sessions and Kit effect; other planned pages remain listed
+below.
 
 | Page | Subsystem |
 | --- | --- |
@@ -20,6 +20,7 @@ they describe.
 | [`stats.md`](stats.md) | Aggregation, bootstrap, ratings, Pareto, run-diff |
 | [`viewer-compare.md`](viewer-compare.md) | Compare, Trace, and Run diff views |
 | `observability.md` (planned) | Calls ledger, event stream, spans, metrics |
+| [`sessions-kit-effect.md`](sessions-kit-effect.md) | Sessions timelines and paired kit-effect comparisons |
 | [`ops-view.md`](ops-view.md) | The Ops view: calls ledger, usage, lanes, meters and hook stats |
 | [`viewer-live.md`](viewer-live.md) | The viewer and the Live stage |
 
