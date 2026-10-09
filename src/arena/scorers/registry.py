@@ -54,3 +54,14 @@ class ScorerRegistry:
 
     def __len__(self) -> int:
         return len(self._scorers)
+
+
+def default_registry() -> ScorerRegistry:
+    """The scorers `arena score` can run without a sandbox or a model.
+
+    Execution scorers need a sandbox and judges need the gateway, so each is added here by
+    the change that gives the CLI what it needs to construct it.
+    """
+    from arena.scorers.visual import VisualScorer
+
+    return ScorerRegistry([VisualScorer()])

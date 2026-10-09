@@ -4,15 +4,16 @@ from __future__ import annotations
 
 import json
 import sqlite3
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from pathlib import Path
 from typing import Annotated
 
 import typer
+from pydantic import ValidationError
 
 from arena.core.cas import ArtifactStore
-from arena.core.models import Score
-from arena.core.store import Store
+from arena.core.models import Artifact, Score
+from arena.core.store import Store, StoreError
 from arena.scorers.base import (
     ArtifactIndex,
     ScorerContext,
@@ -21,6 +22,33 @@ from arena.scorers.base import (
     validate_score,
 )
 from arena.scorers.registry import ScorerRegistry
+
+
+class StoreArtifactIndex:
+    """The ``trial_artifacts`` rows the runner recorded, as an `ArtifactIndex`.
+
+    A trial with no rows has no artifacts. A row that does not parse is an error, not a
+    missing artifact, so a scorer never sees a quietly shortened list.
+    """
+
+    def __init__(self, store: Store) -> None:
+        self._store = store
+
+    def for_trial(self, trial_id: str) -> Sequence[Artifact]:
+        rows = self._store.execute(
+            "SELECT path, sha256, mime, render_hint FROM trial_artifacts "
+            "WHERE trial_id = ? ORDER BY path",
+            (trial_id,),
+        ).fetchall()
+        artifacts: list[Artifact] = []
+        for row in rows:
+            try:
+                artifacts.append(Artifact.model_validate({**dict(row), "trial_id": trial_id}))
+            except ValidationError as exc:
+                raise ScorerError(
+                    f"unreadable artifact record {row['path']!r} for trial {trial_id}: {exc}"
+                ) from exc
+        return artifacts
 
 
 def score_run(
@@ -90,34 +118,47 @@ def _save_score(conn: sqlite3.Connection, score: Score) -> None:
 
 def create_score_command(
     registry: ScorerRegistry,
-    index: ArtifactIndex,
-    store_path: Path,
-    artifact_root: Path,
-) -> typer.Typer:
-    """Build the score command with its runtime registry, artifact index and paths."""
-    command = typer.Typer(
-        name="score",
-        help="Re-score stored trial artifacts.",
-        add_completion=False,
-    )
+    *,
+    index_factory: Callable[[Store], ArtifactIndex] = StoreArtifactIndex,
+) -> Callable[..., None]:
+    """Build the ``score`` command function, to be registered on a Typer app.
 
-    @command.command()
-    def run_score(
+    The store is ``<home>/arena.db`` and the blobs are ``<home>/artifacts``. The command
+    never creates a store: scoring a home that has none is an error.
+    """
+
+    def score(
         run_id: Annotated[str, typer.Argument(help="Run ID to score.")],
         scorers: Annotated[
             list[str],
             typer.Option("--scorer", help="Scorer ID or exact scorer_id@version; repeatable."),
         ],
+        home: Annotated[
+            Path,
+            typer.Option(
+                "--home",
+                envvar="ARENA_HOME",
+                help="Directory holding arena.db and artifacts/.",
+            ),
+        ] = Path("."),
     ) -> None:
-        with Store(store_path) as store:
-            results = score_run(
-                run_id,
-                store,
-                ArtifactStore(artifact_root),
-                index,
-                registry,
-                scorer_refs=scorers,
-            )
+        """Re-score a run's stored artifacts. No trial is run again."""
+        store_path = home / "arena.db"
+        try:
+            if not store_path.is_file():
+                raise ScorerError(f"no arena.db in {home}")
+            with Store(store_path) as store:
+                results = score_run(
+                    run_id,
+                    store,
+                    ArtifactStore(home / "artifacts"),
+                    index_factory(store),
+                    registry,
+                    scorer_refs=scorers,
+                )
+        except (ScorerError, StoreError) as exc:
+            typer.echo(f"error: {exc}", err=True)
+            raise typer.Exit(code=1) from exc
         typer.echo(f"Scored {len(results)} result(s) for run {run_id}.")
 
-    return command
+    return score
