@@ -131,8 +131,6 @@ class DockerSandbox:
                 name,
                 "--network",
                 network,
-                "--network-alias",
-                gateway_host,
                 "--cpus",
                 str(limits.cpus),
                 "--memory",
