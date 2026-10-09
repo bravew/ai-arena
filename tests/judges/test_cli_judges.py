@@ -119,6 +119,28 @@ def test_unreadable_row_names_its_line(tmp_path: Path) -> None:
         load_gold_set(tmp_path)
 
 
+@pytest.mark.parametrize(
+    "bad_length",
+    [True, False, -1, float("inf"), float("-inf"), float("nan"), "12"],
+)
+@pytest.mark.parametrize("field_name", ["length_a", "length_b"])
+def test_invalid_length_is_rejected_with_line_number(
+    tmp_path: Path, field_name: str, bad_length: object
+) -> None:
+    import json
+
+    row = {"item_id": "i1", "judge_id": "j", "verdict": "a", "human_verdict": "a"}
+    (tmp_path / "pair_judgments.jsonl").write_text(
+        json.dumps({**row, "length_a": 5, "length_b": 4})
+        + "\n"
+        + json.dumps({**row, field_name: bad_length})
+        + "\n"
+    )
+
+    with pytest.raises(GoldSetError, match=rf"pair_judgments.jsonl:2: {field_name}"):
+        load_gold_set(tmp_path)
+
+
 def test_unknown_field_is_rejected(tmp_path: Path) -> None:
     (tmp_path / "pair_judgments.jsonl").write_text(
         '{"item_id": "i1", "judge_id": "j", "verdict": "a", "human_verdict": "a", "extra": 1}\n'

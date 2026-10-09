@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import math
 from collections.abc import Iterable
 from dataclasses import dataclass
 from enum import StrEnum
@@ -67,6 +68,17 @@ def load_gold_set(path: Path) -> tuple[PairJudgment, ...]:
                         raise ValueError("human_verdict must be 'a', 'b', 'tie', or null")
                     if row.swapped_verdict not in (None, "a", "b", "tie"):
                         raise ValueError("swapped_verdict must be 'a', 'b', 'tie', or null")
+                    for field_name in ("length_a", "length_b"):
+                        length = fields.get(field_name)
+                        if length is not None and (
+                            isinstance(length, bool)
+                            or not isinstance(length, (int, float))
+                            or not math.isfinite(length)
+                            or length < 0
+                        ):
+                            raise ValueError(
+                                f"{field_name} must be a finite non-negative number or null"
+                            )
                     rows.append(row)
                 except (TypeError, ValueError, json.JSONDecodeError) as error:
                     raise GoldSetError(f"{source}:{line_number}: {error}") from error
