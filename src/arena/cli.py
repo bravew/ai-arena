@@ -8,6 +8,11 @@ import typer
 import yaml
 
 from arena import __version__
+from arena.cli_gateway import (
+    build_gateway_app,
+    create_doctor_command,
+    providers_app,
+)
 from arena.cli_score import create_score_command
 from arena.core.config import validate_document
 from arena.providers.config import parse_yaml, reject_plaintext_secrets
@@ -78,3 +83,7 @@ def main(
 
 
 import_module("arena.cli_report")
+
+app.add_typer(build_gateway_app(), name="gateway")
+app.add_typer(providers_app, name="providers")
+app.command("doctor")(create_doctor_command())
