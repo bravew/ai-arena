@@ -1,0 +1,34 @@
+id: blog-post
+version: 2
+kind: content
+scale: 1-5
+criteria:
+  - id: accuracy
+    weight: 3
+    desc: No factual claims contradicted by the brief.
+  - id: structure
+    weight: 2
+    desc: Clear hook, logical sections, explicit CTA.
+  - id: voice
+    weight: 2
+    desc: Matches the brand voice sample.
+  - id: concision
+    weight: 1
+    desc: Length is not quality; penalize padding.
+anchors:
+  accuracy:
+    1: Contains claims contradicted by the brief.
+    3: Mostly accurate with a minor unsupported claim.
+    5: Every factual claim matches the brief.
+  structure:
+    1: No discernible structure or CTA.
+    3: Sections are present but the progression is uneven.
+    5: Strong hook, logical sections and explicit CTA.
+  voice:
+    1: Conflicts with the supplied brand voice.
+    3: Mostly consistent with occasional mismatches.
+    5: Consistently matches the supplied brand voice.
+  concision:
+    1: Mostly padding or far outside the requested length.
+    3: Some unnecessary repetition.
+    5: Every section earns its place and fits the requested length.

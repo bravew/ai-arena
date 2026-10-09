@@ -8,8 +8,10 @@ import typer
 import yaml
 
 from arena import __version__
+from arena.cli_score import create_score_command
 from arena.core.config import validate_document
 from arena.providers.config import parse_yaml, reject_plaintext_secrets
+from arena.scorers.registry import default_registry
 
 app = typer.Typer(
     name="arena",
@@ -55,6 +57,9 @@ def validate(
             typer.echo(issue, err=True)
         raise typer.Exit(code=1)
     typer.echo(f"Validated {len(files)} config file(s).")
+
+
+app.command("score")(create_score_command(default_registry()))
 
 
 @app.callback()
