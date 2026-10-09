@@ -19,6 +19,7 @@ they describe.
 | [`scoring.md`](scoring.md) | The scorer framework; deterministic scorers and LLM judges plug into it |
 | `stats.md` (planned) | Aggregation, bootstrap, ratings, Pareto, run-diff |
 | `observability.md` (planned) | Calls ledger, event stream, spans, metrics |
+| [`ops-view.md`](ops-view.md) | The Ops view: calls ledger, usage, lanes, meters and hook stats |
 | [`viewer-live.md`](viewer-live.md) | The viewer and the Live stage |
 
 ## Page template

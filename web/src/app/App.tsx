@@ -7,6 +7,7 @@ import { AppLayout } from './routes';
 import { HomePage, PlaceholderPage } from './pages';
 import { BundleContext, useBundleState } from './state';
 import { LiveView } from '../views/live/LiveView';
+import { OpsView } from '../views/ops/OpsView';
 
 const router = createBrowserRouter([
   {
@@ -23,7 +24,7 @@ const router = createBrowserRouter([
       { path: 'sessions', element: <PlaceholderPage title="Sessions" /> },
       { path: 'kit-effect', element: <PlaceholderPage title="Kit effect" /> },
       { path: 'live', element: <LiveRoute /> },
-      { path: 'ops', element: <PlaceholderPage title="Operations" /> },
+      { path: 'ops', element: <OpsView /> },
       { path: '*', element: <PlaceholderPage title="Page not found" /> },
     ],
   },
