@@ -134,10 +134,6 @@ def test_smoke_inputs_hold_no_plaintext_secrets() -> None:
         assert reject_plaintext_secrets(read_yaml(path), path) == []
 
 
-@pytest.mark.xfail(
-    reason="`arena validate` only accepts providers.yaml and models.yaml; it has no "
-    "suite, contestant or kit loader yet (DEV_PLAN §13 CP1 result)",
-)
 def test_arena_validate_accepts_the_smoke_inputs() -> None:
     result = CliRunner().invoke(app, ["validate", str(SUITE), str(CONTESTANTS), str(ROOT / "kits")])
     assert result.exit_code == 0, result.output
