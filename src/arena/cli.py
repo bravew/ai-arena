@@ -1,5 +1,6 @@
 """The `arena` command line. Subcommands are added by their own modules."""
 
+from importlib import import_module
 from pathlib import Path
 from typing import Annotated
 
@@ -7,8 +8,10 @@ import typer
 import yaml
 
 from arena import __version__
+from arena.cli_score import create_score_command
 from arena.core.config import validate_document
 from arena.providers.config import parse_yaml, reject_plaintext_secrets
+from arena.scorers.registry import default_registry
 
 app = typer.Typer(
     name="arena",
@@ -56,6 +59,9 @@ def validate(
     typer.echo(f"Validated {len(files)} config file(s).")
 
 
+app.command("score")(create_score_command(default_registry()))
+
+
 @app.callback()
 def main(
     version: Annotated[
@@ -72,3 +78,4 @@ def main(
 
 
 __import__("arena.cli_run")
+import_module("arena.cli_report")

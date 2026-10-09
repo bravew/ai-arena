@@ -4,9 +4,11 @@ from pydantic import ValidationError
 from arena.core.modelref import ModelRef
 from arena.core.models import (
     RUN_EVENT_KINDS,
+    Artifact,
     Call,
     Contestant,
     RunEvent,
+    RunProvenance,
     Scaffold,
     Score,
     Tokens,
@@ -113,6 +115,30 @@ def test_run_event_kinds_match_the_plan() -> None:
         RunEvent.model_validate(
             {"seq": 1, "ts": "2026-10-08T00:00:00Z", "run_id": "r", "kind": "x"}
         )
+
+
+def test_artifact_can_link_to_trial_and_provenance_defaults_native_verified() -> None:
+    artifact = Artifact(
+        trial_id="trial-1",
+        sha256="a" * 64,
+        path="answer.txt",
+        mime="text/plain",
+        render_hint="code",
+    )
+    assert artifact.trial_id == "trial-1"
+    assert RunProvenance().model_dump() == {
+        "origin": "native",
+        "verification": "verified",
+        "importer": None,
+        "importer_version": None,
+        "source_ref": None,
+    }
+    imported = RunProvenance(origin="imported", verification="unverified", importer="inspect")
+    assert imported.origin == "imported" and imported.verification == "unverified"
+    with pytest.raises(ValidationError, match="verification must match provenance origin"):
+        RunProvenance(origin="native", verification="unverified")
+    with pytest.raises(ValidationError, match="verification must match provenance origin"):
+        RunProvenance(origin="imported", verification="verified")
 
 
 def test_score_is_normalized_to_unit_range() -> None:

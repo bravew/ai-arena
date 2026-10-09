@@ -1,5 +1,6 @@
 {
-  "bundle_version": 1,
+  "bundle_version": 2,
+  "provenance": {"origin": "native", "verification": "verified", "importer": null, "importer_version": null, "source_ref": null},
   "run": {"id": "run-schema-001", "suite_id": "smoke", "started_at": "2026-10-08T10:00:00Z", "ended_at": "2026-10-08T10:01:00Z", "status": "succeeded"},
   "contestants": [
     {"id": "c-ablation-base", "label": "OpenCode · no kit", "model": "mock/echo", "params": {}, "scaffold": {"id": "opencode", "version": "1.2.0", "settings": {}}, "scaffold_prompt": "native", "kit_hash": "none", "orchestration": "single", "prompt_version": null, "hooks": []},
@@ -24,6 +25,6 @@
     {"trial_id": "trial-kit", "kit_hash": "sha256:kit-v3", "written": [{"path": ".config/opencode/AGENTS.md", "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}], "refused": []}
   ],
   "artifacts": [
-    {"sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", "path": "artifacts/bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", "mime": "text/plain", "render_hint": "code"}
+    {"trial_id": "trial-base", "sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", "path": "answer.txt", "mime": "text/plain", "render_hint": "code"}
   ]
 }
