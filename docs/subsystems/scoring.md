@@ -157,3 +157,31 @@ Build, type-check and security use scripted results. No test needs Docker.
 ```sh
 uv run pytest tests/scorers/test_constraint.py tests/scorers/test_reference.py
 ```
+
+## Rubric judge
+
+### Responsibilities and sources of truth
+
+| Part | Responsibility | Source |
+| --- | --- | --- |
+| Rubric | Validates criteria, positive weights, scale, anchors, version and content digest. | [`Rubric`, `load_rubric`](../../src/arena/judges/rubric.py) |
+| Pointwise judge | Reads the configured answer artifact, asks one named judge model for a JSON score and rationale per criterion, and produces a weighted score normalized to [0, 1]. The identity is `rubric-judge:<rubric id>@<rubric version>`. | [`RubricJudge`](../../src/arena/judges/rubric.py) |
+| Judge transport | Sends one OpenAI chat-completions or Anthropic messages request with bearer token `arena-judge-<run_id>`; the gateway attributes it to purpose `judge`. It does not retry or change models. | [`JudgeTransport`, `HttpJudgeTransport`](../../src/arena/judges/client.py) |
+
+### Runtime path
+
+1. A `RubricJudge` reads its configured text artifact through `ScorerContext.read`, sends the rubric criteria, anchors, task prompt and answer to its injected transport, then validates a strict JSON verdict with one in-range integer score and a non-empty rationale per criterion.
+2. The judge call carries the run's `arena-judge-<run_id>` token. The gateway attributes it to `purpose: judge` for separate ledger accounting. Unit tests use in-process fake transports, so they make no provider calls.
+
+### Constraints and failure behavior
+
+- A rubric change should increment the rubric version. The score identity uses the rubric version, and evidence also records the rubric SHA-256 so an edit made without a version bump stays visible. Registry resolution by `rubric-judge` ID alone is ambiguous when several versions are registered; use the explicit `rubric-judge:<id>@<version>` reference.
+- A malformed, incomplete, duplicate, unknown-criterion or out-of-scale verdict raises `MalformedVerdictError`. Transport and artifact failures also abort scoring. `score_run` writes only after every score succeeds, so a judge failure writes nothing and leaves existing score rows untouched.
+- Evidence records the judge model ID, the reply model when supplied, and token usage when returned.
+- Not covered: no real provider or gateway call has been exercised. The mock provider (#22) and the gateway integration come later.
+
+### Verification
+
+```sh
+uv run pytest tests/judges/test_rubric.py
+```
