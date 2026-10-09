@@ -1,0 +1,6 @@
+import os
+
+
+def total(values):
+    unused = 1
+    return sum(values)

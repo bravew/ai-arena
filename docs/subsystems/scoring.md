@@ -52,3 +52,59 @@ plug into this framework in their own PRs and extend this page.
 ```sh
 uv run pytest tests/scorers/test_framework.py
 ```
+
+## Execution scorers
+
+Scorers that run code from a trial's artifacts in a sandbox
+([`execution.py`](../../src/arena/scorers/execution.py)). They apply to `codegen` and
+`agentic-code` tasks. They plug into the framework above and add no new storage.
+
+### Responsibilities and sources of truth
+
+| Part | Responsibility | Source |
+| --- | --- | --- |
+| Sandbox protocol | Two methods: `put_files` and `run`. A timeout is a `CommandResult`; a sandbox that cannot start, copy or run raises `SandboxError`. The CP3 Docker backend implements it; unit tests use fakes. | [`Sandbox`](../../src/arena/scorers/execution.py) |
+| Hidden tests | Copies the trial's artifacts and the task's hidden test files into a fresh sandbox and runs pytest. `normalized` is passed / (passed + failed + errored). The task's files replace a contestant file at the same path. | [`HiddenTestsScorer`](../../src/arena/scorers/execution.py) |
+| Build, type-check | Pass (1.0) when the command exits 0; any other exit or a timeout is 0. Both can be gates. | [`ExitCodeScorer`](../../src/arena/scorers/execution.py) |
+| Lint, security scan | Count findings with a counter. No findings scores 1.0, `n` findings score `1/(1+n)`, and `passed` is true only for none. | [`FindingsScorer`](../../src/arena/scorers/execution.py) |
+| Finding counters | `count_ruff_findings` reads ruff's `Found N errors.` or `All checks passed!`. `count_json_results` takes the length of `results` in a JSON report (`bandit -f json`, `semgrep --json`). | [`count_ruff_findings`, `count_json_results`](../../src/arena/scorers/execution.py) |
+
+Scorer IDs are `hidden-tests`, `build`, `typecheck`, `lint` and `security`, all at version `1`.
+The command, timeout and hidden test files are constructor arguments, so a task chooses them.
+
+### Runtime path
+
+1. The scorer reads every artifact through `ScorerContext.read` (digest-checked) and rejects
+   an absolute path or one containing `..`.
+2. It opens a new sandbox from the `SandboxFactory`, copies the artifacts and then the task's
+   files, and runs one command with the timeout.
+3. It turns the result into a `Score` whose evidence holds the command, exit code and
+   parsed counts. A failing build or type-check also keeps the last 2000 characters of output.
+   For hidden tests, the evidence lists the passed, failed and skipped test IDs.
+
+### Constraints and failure behavior
+
+- The contestant's code is wrong, so the score is 0 and the trial is scored: a failing test,
+  an unimportable solution (pytest reports an error), a non-zero build or type-check exit,
+  a timeout of tests, build or type-check.
+- Our environment is wrong, so `ScorerError` is raised and nothing is written: a `SandboxError`,
+  exit 126 or 127 (the command could not start), pytest output with no summary or no tests,
+  an exit code that contradicts the summary, result lines that disagree with the counts, a
+  lint or security output the counter cannot read, and a lint or security timeout.
+- Unknown is never 0 or "clean". An empty or unparseable security report is an error.
+- `FindingsScorer` does not use the exit code. Ruff and bandit exit 1 when they find something.
+- Scoring twice gives equal scores for the same output. Evidence for hidden tests contains no
+  timings or raw output.
+- Not covered: `1/(1+n)` is a plain decay and does not weight findings by severity. There is
+  no performance benchmark scorer yet.
+
+### Verification
+
+```sh
+uv run pytest tests/scorers/test_execution.py
+```
+
+The golden fixtures are in `tests/scorers/golden/`: the oracle solution scores 1.0, the null
+solution (no artifacts) scores 0 and the buggy solution fails three named tests. They run
+real pytest and ruff in a throwaway host directory (a test double, not an isolated sandbox).
+Build, type-check and security use scripted results. No test needs Docker.
