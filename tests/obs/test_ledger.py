@@ -38,6 +38,7 @@ def _catalog() -> ModelCatalog:
                     "price_per_mtok": {"in": 15, "out": 75},
                 },
                 {"ref": "anthropic/claude-opus-5-5-sub", "pricing": "subscription"},
+                {"ref": "openrouter/qwen3-coder:free", "price_per_mtok": {"in": 0, "out": 0}},
             ],
         }
     )
@@ -59,6 +60,24 @@ def test_ledger_persists_full_call_and_prices_tokens(tmp_path: Path) -> None:
         assert '"protocol_in":"anthropic"' in row[0]
 
 
+def test_ledger_preserves_colon_in_non_effort_model_name(tmp_path: Path) -> None:
+    call = _call().model_copy(
+        update={
+            "id": "c3",
+            "provider": "openrouter",
+            "model_asked": "openrouter/qwen3-coder:free",
+        }
+    )
+    with Store(tmp_path / "arena.db") as store:
+        store.execute("INSERT INTO runs(id, config_json, status) VALUES ('r1', '{}', 'running')")
+        store.execute(
+            "INSERT INTO trials(id, run_id, contestant_id, task_id, status) "
+            "VALUES ('t1', 'r1', 'contestant', 'task', 'running')"
+        )
+        ledger = CallsLedger(store, _catalog())
+        assert ledger.record(call).cost_usd == 0
+
+
 def test_subscription_cost_is_unknown_and_budget_only_counts_api_spend(tmp_path: Path) -> None:
     call = _call().model_copy(update={"id": "c2", "model_asked": "anthropic/claude-opus-5-5-sub"})
     with Store(tmp_path / "arena.db") as store:
@@ -71,7 +90,7 @@ def test_subscription_cost_is_unknown_and_budget_only_counts_api_spend(tmp_path:
         recorded = ledger.record(call)
         assert recorded.cost_usd is None
         budget = Budget()
-        asyncio.run(budget.record_call(recorded, EventLog(tmp_path / "events")))
+        asyncio.run(budget.record_call(recorded, EventLog(tmp_path / "events"), subscription=True))
         budget.record_compute_cost(1.25)
         report = budget.report()
         assert report.metered_spend_usd == 0
@@ -94,6 +113,17 @@ def test_budget_reserves_spend_for_concurrent_calls(tmp_path: Path) -> None:
         await accepted.settle(10.0)
         assert budget.metered_spend_usd == 10.0
         assert budget.report().remaining_usd == 10.0
+
+    asyncio.run(run())
+
+
+def test_budget_rejects_unpriced_metered_call(tmp_path: Path) -> None:
+    async def run() -> None:
+        budget = Budget()
+        with pytest.raises(ValueError, match="metered calls require a price"):
+            await budget.check_call(
+                _call().model_copy(update={"cost_usd": None}), EventLog(tmp_path / "events")
+            )
 
     asyncio.run(run())
 

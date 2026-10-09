@@ -28,9 +28,10 @@ class BudgetReport:
 class BudgetReservation:
     """One call's reserved share of the cap."""
 
-    def __init__(self, budget: Budget, call: Call) -> None:
+    def __init__(self, budget: Budget, call: Call, *, subscription: bool) -> None:
         self.budget = budget
         self.call = call
+        self.subscription = subscription
         self._settled = False
 
     async def settle(self, final_cost_usd: float | None = None) -> None:
@@ -63,8 +64,12 @@ class Budget:
     def metered_spend_usd(self) -> float:
         return self._metered_spend
 
-    async def check_call(self, call: Call, events: EventLog) -> BudgetReservation:
+    async def check_call(
+        self, call: Call, events: EventLog, *, subscription: bool = False
+    ) -> BudgetReservation:
         """Atomically reserve a call's estimated cost before dispatching it upstream."""
+        if subscription == (call.cost_usd is not None):
+            raise ValueError("subscription calls require null cost; metered calls require a price")
         amount = call.cost_usd or 0.0
         async with self._lock:
             proposed_spend = (
@@ -99,8 +104,11 @@ class Budget:
                 )
             if call.id in self._reserved:
                 raise ValueError(f"call already has a budget reservation: {call.id}")
-            self._reserved[call.id] = (amount, call)
-        return BudgetReservation(self, call)
+            self._reserved[call.id] = (
+                amount,
+                call.model_copy(update={"cost_usd": None if subscription else amount}),
+            )
+        return BudgetReservation(self, call, subscription=subscription)
 
     async def settle(
         self,
@@ -119,7 +127,7 @@ class Budget:
             if not billable:
                 del self._reserved[call.id]
                 return
-            if reserved_call.cost_usd is None:
+            if reservation.subscription:
                 del self._reserved[call.id]
                 self._subscription_tokens += sum(
                     (
@@ -142,9 +150,11 @@ class Budget:
                     f"reserved amount ${reserved_amount:.6f}"
                 )
 
-    async def record_call(self, call: Call, events: EventLog) -> None:
+    async def record_call(
+        self, call: Call, events: EventLog, *, subscription: bool = False
+    ) -> None:
         """Reserve and settle immediately for callers without a separate dispatch phase."""
-        reservation = await self.check_call(call, events)
+        reservation = await self.check_call(call, events, subscription=subscription)
         await reservation.settle(call.cost_usd)
 
     def record_compute_cost(self, cost_usd: float) -> None:

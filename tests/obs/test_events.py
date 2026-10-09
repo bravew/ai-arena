@@ -46,6 +46,12 @@ def test_event_log_rejects_run_ids_that_escape_the_root(tmp_path: Path) -> None:
     asyncio.run(run())
 
 
+def test_second_event_log_writer_for_same_root_is_rejected(tmp_path: Path) -> None:
+    EventLog(tmp_path)
+    with pytest.raises(RuntimeError, match="already has a writer"):
+        EventLog(tmp_path)
+
+
 def test_event_log_recovers_sequence_from_existing_append_only_file(tmp_path: Path) -> None:
     async def run() -> None:
         run_dir = tmp_path / "r1"

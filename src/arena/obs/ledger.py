@@ -6,6 +6,7 @@ import json
 from typing import Any
 
 from arena.catalog.config import ModelCatalog
+from arena.core.modelref import ModelRef
 from arena.core.models import Call
 from arena.core.store import Store
 
@@ -19,9 +20,11 @@ class CallsLedger:
         self._models = {model.ref: model for model in catalog.models}
 
     def record(self, call: Call) -> Call:
-        model_ref = call.model_asked.partition(":")[0]
-        if "/" not in model_ref:
-            model_ref = f"{call.provider}/{model_ref}"
+        model_name = call.model_asked
+        if "/" not in model_name:
+            model_name = f"{call.provider}/{model_name}"
+        parsed_model = ModelRef.parse(model_name)
+        model_ref = f"{parsed_model.provider}/{parsed_model.model}"
         model = self._models.get(model_ref)
         if model is None:
             raise ValueError(f"call model is not in the catalog: {model_ref}")

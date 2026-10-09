@@ -3,8 +3,12 @@
 from __future__ import annotations
 
 import asyncio
+import fcntl
+import hashlib
 import json
+import os
 import re
+import tempfile
 from pathlib import Path
 
 from arena.core.bundle_contract import validate_event
@@ -21,9 +25,15 @@ class EventLog:
         self._events: dict[str, list[RunEvent]] = {}
         self._conditions: dict[str, asyncio.Condition] = {}
         self._locks: dict[str, asyncio.Lock] = {}
+        self._writer_lock_path = Path(tempfile.gettempdir()) / (
+            f"arena-events-{hashlib.sha256(str(self.root.resolve()).encode()).hexdigest()}.lock"
+        )
+        self._writer_lock_fd: int | None = None
+        self._acquire_writer_lock()
 
     async def append(self, event: RunEvent) -> RunEvent:
         self._validate_run_id(event.run_id)
+        self._acquire_writer_lock()
         lock = self._locks.setdefault(event.run_id, asyncio.Lock())
         async with lock:
             events = self._events.get(event.run_id)
@@ -70,6 +80,17 @@ class EventLog:
         except TimeoutError:
             return []
         return [event for event in self._events[run_id] if event.seq > after]
+
+    def _acquire_writer_lock(self) -> None:
+        if self._writer_lock_fd is not None:
+            return
+        lock_fd = os.open(self._writer_lock_path, os.O_CREAT | os.O_RDWR, 0o600)
+        try:
+            fcntl.flock(lock_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError as exc:
+            os.close(lock_fd)
+            raise RuntimeError(f"event log root already has a writer: {self.root}") from exc
+        self._writer_lock_fd = lock_fd
 
     @staticmethod
     def _validate_run_id(run_id: str) -> None:
