@@ -173,9 +173,7 @@ def test_no_eligible_complete_pairs_have_no_interval() -> None:
 
 def test_invalid_and_duplicate_inputs_fail_explicitly() -> None:
     with pytest.raises(ValueError, match="duplicate kit trial"):
-        compute_kit_effect(
-            [row("k1", "kit", "t", 1, 0.4), row("k2", "kit", "t", 1, 0.5)], []
-        )
+        compute_kit_effect([row("k1", "kit", "t", 1, 0.4), row("k2", "kit", "t", 1, 0.5)], [])
     with pytest.raises(ValueError, match="unknown skill session trial"):
         compute_kit_effect(
             [row("k", "kit", "t", 1, 0.4)],

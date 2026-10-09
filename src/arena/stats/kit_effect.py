@@ -156,9 +156,7 @@ def compute_kit_effect(
     complete_keys = eligible_keys["kit"] & eligible_keys["baseline"]
     incomplete_pairs = len(all_keys - complete_keys)
     excluded_pairs = sum(
-        key in by_arm["kit"]
-        and key in by_arm["baseline"]
-        and key not in complete_keys
+        key in by_arm["kit"] and key in by_arm["baseline"] and key not in complete_keys
         for key in all_keys
     )
     unmatched_pairs = incomplete_pairs - excluded_pairs
@@ -179,9 +177,7 @@ def compute_kit_effect(
         if differences_by_task
         else None
     )
-    task_differences = [
-        math.fsum(values) / len(values) for values in differences_by_task.values()
-    ]
+    task_differences = [math.fsum(values) / len(values) for values in differences_by_task.values()]
     wins = sum(value > 0 for value in task_differences)
     losses = sum(value < 0 for value in task_differences)
 
@@ -227,8 +223,15 @@ def compute_kit_effect(
 
 def _parse_trial(item: Mapping[str, object]) -> KitTrial:
     allowed = {
-        "trial_id", "arm", "task_id", "attempt", "score", "cost_usd",
-        "swapped", "unmetered", "kit_unapplied",
+        "trial_id",
+        "arm",
+        "task_id",
+        "attempt",
+        "score",
+        "cost_usd",
+        "swapped",
+        "unmetered",
+        "kit_unapplied",
     }
     extra = item.keys() - allowed
     if extra:
