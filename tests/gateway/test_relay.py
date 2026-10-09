@@ -122,6 +122,42 @@ def test_cross_protocol_translation_requires_target_shaped_structured_output() -
     assert translated["text"] == {"format": {"type": "json_schema", "name": "answer"}}
 
 
+def test_empty_or_incomplete_structured_output_mapping_is_rejected() -> None:
+    source = {
+        "model": "example/model",
+        "response_format": {"type": "json_schema", "json_schema": {"name": "answer"}},
+        "structured_outputs": {"strict": True},
+    }
+    target = {"text": {"format": {"type": "json_schema", "name": "answer"}}}
+
+    def translator(
+        source_protocol: str, target_protocol: str, payload: Mapping[str, Any]
+    ) -> Mapping[str, Any]:
+        return target
+
+    with pytest.raises(TranslationError, match=r"response_format.*no target-protocol mapping"):
+        translate_request(
+            source,
+            source_protocol="chat",
+            target_protocol="responses",
+            translator=translator,
+            structured_output_mapper=lambda source, target, constraint: {},
+        )
+
+    with pytest.raises(TranslationError, match=r"structured_outputs.*no target-protocol mapping"):
+        translate_request(
+            source,
+            source_protocol="chat",
+            target_protocol="responses",
+            translator=translator,
+            structured_output_mapper=lambda source, target, constraint: (
+                {"text": {"format": {"type": "json_schema", "name": "answer"}}}
+                if "response_format" in constraint
+                else {}
+            ),
+        )
+
+
 def test_translator_failure_has_gateway_translation_error() -> None:
     with pytest.raises(TranslationError, match="translation from chat to anthropic failed"):
         translate_request(

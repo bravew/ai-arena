@@ -47,13 +47,25 @@ def translate_request(
                 f"translation from {source_protocol} to {target_protocol} requires a "
                 "structured_output_mapper"
             )
-        try:
-            expected = dict(structured_output_mapper(source_protocol, target_protocol, structured))
-        except Exception as exc:
-            message = (
-                f"structured-output translation from {source_protocol} to {target_protocol} failed"
-            )
-            raise TranslationError(message) from exc
+        expected: dict[str, Any] = {}
+        for source_key, source_value in structured.items():
+            try:
+                mapped = dict(
+                    structured_output_mapper(
+                        source_protocol, target_protocol, {source_key: source_value}
+                    )
+                )
+            except Exception as exc:
+                message = (
+                    f"structured-output translation from {source_protocol} to "
+                    f"{target_protocol} failed"
+                )
+                raise TranslationError(message) from exc
+            if not mapped:
+                raise TranslationError(
+                    f"structured-output setting {source_key!r} has no target-protocol mapping"
+                )
+            expected.update(mapped)
         for key, value in expected.items():
             if translated.get(key) != value:
                 raise TranslationError(
