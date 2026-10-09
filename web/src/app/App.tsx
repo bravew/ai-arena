@@ -7,7 +7,20 @@ import { AppLayout } from './routes';
 import { HomePage, PlaceholderPage } from './pages';
 import { SessionsView } from '../views/sessions/SessionsView';
 import { KitEffectView } from '../views/kit-effect/KitEffectView';
-import { BundleContext } from './state';
+import { BundleContext, useBundleState } from './state';
+import { CompareView } from '../views/compare/CompareView';
+import { TraceView } from '../views/trace/TraceView';
+import { RunDiffView } from '../views/rundiff/RunDiffView';
+import { LiveView } from '../views/live/LiveView';
+import { OpsView } from '../views/ops/OpsView';
+
+function CompareRoute() { const { bundle } = useBundleState(); return bundle ? <CompareView bundle={bundle} /> : <PlaceholderPage title="Compare trials" />; }
+function TraceRoute() { const { bundle } = useBundleState(); return bundle ? <TraceView bundle={bundle} /> : <PlaceholderPage title="Trace" />; }
+function RunDiffRoute() { const { bundle } = useBundleState(); return bundle ? <RunDiffView bundle={bundle} /> : <PlaceholderPage title="Run diff" />; }
+function LiveRoute() {
+  const { bundle, validation } = useBundleState();
+  return <LiveView bundle={bundle ?? (validation?.ok === false ? schemaExample : undefined)} />;
+}
 
 const router = createBrowserRouter([
   {
@@ -18,13 +31,13 @@ const router = createBrowserRouter([
       { path: 'leaderboard', element: <PlaceholderPage title="Leaderboard" /> },
       { path: 'pareto', element: <PlaceholderPage title="Pareto frontier" /> },
       { path: 'matrix', element: <PlaceholderPage title="Task matrix" /> },
-      { path: 'compare', element: <PlaceholderPage title="Compare trials" /> },
-      { path: 'trace', element: <PlaceholderPage title="Trace" /> },
-      { path: 'run-diff', element: <PlaceholderPage title="Run diff" /> },
+      { path: 'compare', element: <CompareRoute /> },
+      { path: 'trace', element: <TraceRoute /> },
+      { path: 'run-diff', element: <RunDiffRoute /> },
       { path: 'sessions', element: <SessionsPage /> },
       { path: 'kit-effect', element: <KitEffectPage /> },
-      { path: 'live', element: <PlaceholderPage title="Live run" /> },
-      { path: 'ops', element: <PlaceholderPage title="Operations" /> },
+      { path: 'live', element: <LiveRoute /> },
+      { path: 'ops', element: <OpsView /> },
       { path: '*', element: <PlaceholderPage title="Page not found" /> },
     ],
   },

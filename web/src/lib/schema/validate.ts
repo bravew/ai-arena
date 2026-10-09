@@ -1,6 +1,7 @@
 import Ajv2020, { type AnySchema, type ErrorObject, type ValidateFunction } from 'ajv/dist/2020';
 import addFormats from 'ajv-formats';
-import bundleSchema from '../../../../docs/bundle-schema.json';
+import bundleV1Schema from '../../../../docs/bundle-schema-v1.json';
+import bundleV2Schema from '../../../../docs/bundle-schema.json';
 import eventSchema from '../../../../docs/event-schema.json';
 import type { Bundle, RunEvent } from './types';
 
@@ -14,7 +15,8 @@ export type Validated<T> = { ok: true; value: T } | { ok: false; issues: SchemaI
 
 const ajv = new Ajv2020({ allErrors: true, strict: false });
 addFormats(ajv);
-const isBundle = ajv.compile<Bundle>(bundleSchema as AnySchema);
+const isBundleV1 = ajv.compile<Bundle>(bundleV1Schema as AnySchema);
+const isBundleV2 = ajv.compile<Bundle>(bundleV2Schema as AnySchema);
 const isEvent = ajv.compile<RunEvent>(eventSchema as AnySchema);
 
 function issueFrom(error: ErrorObject): SchemaIssue {
@@ -29,8 +31,8 @@ function issueFrom(error: ErrorObject): SchemaIssue {
     message = `has unexpected property "${params['additionalProperty']}"`;
   } else if (error.keyword === 'enum' && Array.isArray(params['allowedValues'])) {
     message = `must be one of: ${params['allowedValues'].join(', ')}`;
-  } else if (error.keyword === 'const' && params['allowedValue'] === 1) {
-    message = 'must be version 1';
+  } else if (error.keyword === 'const' && (params['allowedValue'] === 1 || params['allowedValue'] === 2)) {
+    message = `must be version ${String(params['allowedValue'])}`;
   }
 
   if (error.keyword === 'required' && typeof params['missingProperty'] === 'string') {
@@ -45,15 +47,9 @@ function escapePointer(value: string): string {
   return value.replaceAll('~', '~0').replaceAll('/', '~1');
 }
 
-function validate<T>(input: unknown, check: ValidateFunction<T>, version: unknown, field: 'bundle_version' | 'event_version'): Validated<T> {
+function validate<T>(input: unknown, check: ValidateFunction<T>): Validated<T> {
   if (typeof input !== 'object' || input === null || Array.isArray(input)) {
     return { ok: false, issues: [{ path: '', message: 'must be an object' }] };
-  }
-  if (version !== undefined && version !== 1) {
-    return {
-      ok: false,
-      issues: [{ path: `/${field}`, message: `unsupported ${field.replace('_', ' ')} ${String(version)}; this viewer reads version 1` }],
-    };
   }
   if (check(input)) return { ok: true, value: input as T };
   const issues = (check.errors ?? []).map(issueFrom);
@@ -61,13 +57,27 @@ function validate<T>(input: unknown, check: ValidateFunction<T>, version: unknow
 }
 
 export function validateBundle(input: unknown): Validated<Bundle> {
-  const version = typeof input === 'object' && input !== null ? Reflect.get(input, 'bundle_version') : undefined;
-  return validate(input, isBundle, version, 'bundle_version');
+  if (typeof input !== 'object' || input === null || Array.isArray(input)) {
+    return { ok: false, issues: [{ path: '', message: 'must be an object' }] };
+  }
+  const version = Reflect.get(input, 'bundle_version');
+  if (version === 1) return validate(input, isBundleV1);
+  if (version === 2) return validate(input, isBundleV2);
+  return {
+    ok: false,
+    issues: [{ path: '/bundle_version', message: `unsupported bundle version ${String(version)}; this viewer reads versions 1 and 2` }],
+  };
 }
 
 export function validateEvent(input: unknown): Validated<RunEvent> {
   const version = typeof input === 'object' && input !== null ? Reflect.get(input, 'event_version') : undefined;
-  return validate(input, isEvent, version, 'event_version');
+  if (version !== undefined && version !== 1) {
+    return {
+      ok: false,
+      issues: [{ path: '/event_version', message: `unsupported event version ${String(version)}; this viewer reads version 1` }],
+    };
+  }
+  return validate(input, isEvent);
 }
 
 export function validateEventStream(text: string): Validated<RunEvent[]> {
