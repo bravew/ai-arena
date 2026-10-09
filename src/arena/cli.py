@@ -7,6 +7,7 @@ import typer
 import yaml
 
 from arena import __version__
+from arena.cli_selfcheck import selfcheck
 from arena.core.config import validate_document
 from arena.providers.config import parse_yaml, reject_plaintext_secrets
 
@@ -54,6 +55,21 @@ def validate(
             typer.echo(issue, err=True)
         raise typer.Exit(code=1)
     typer.echo(f"Validated {len(files)} config file(s).")
+
+
+@app.command(name="selfcheck")
+def selfcheck_command(
+    paths: Annotated[list[Path], typer.Argument(help="Suite directories or task.yaml files.")],
+    trust_task_code: Annotated[
+        bool,
+        typer.Option(
+            "--trust-task-code",
+            help="Confirm these local suites and scorer commands are trusted to run on this host.",
+        ),
+    ] = False,
+) -> None:
+    """Run trusted task scorer commands with host privileges against oracle and null."""
+    selfcheck(paths, trust_task_code=trust_task_code)
 
 
 @app.callback()

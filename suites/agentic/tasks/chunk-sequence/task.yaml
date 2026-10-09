@@ -1,0 +1,7 @@
+id: agentic.chunk-sequence
+version: 1
+kind: agentic-code
+created_at: 2026-10-08
+prompt_file: prompt.md
+scorers:
+  - { id: execution, weight: 1.0, command: "python -m pytest -q tests" }

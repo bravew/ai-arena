@@ -1,0 +1,7 @@
+id: code.rust-unique-sorted
+version: 1
+kind: codegen
+created_at: 2026-10-08
+prompt_file: prompt.md
+scorers:
+  - { id: execution, weight: 1.0, command: "cargo test --manifest-path Cargo.toml" }
