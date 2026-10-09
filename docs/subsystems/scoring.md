@@ -126,3 +126,34 @@ The golden fixtures are in `tests/scorers/golden/`: the oracle solution scores 1
 solution (no artifacts) scores 0 and the buggy solution fails three named tests. They run
 real pytest and ruff in a throwaway host directory (a test double, not an isolated sandbox).
 Build, type-check and security use scripted results. No test needs Docker.
+
+## Constraint and reference scorers
+
+### Responsibilities and sources of truth
+
+| Part | Responsibility | Source |
+| --- | --- | --- |
+| Constraint scorer | Deterministic word-count, required Markdown section and keyword, forbidden-content, strict JSON, JSON Schema, and Markdown structure checks. All configured checks must pass for a pass verdict; the normalized value is the fraction passed. | [`ConstraintScorer`, check models](../../src/arena/scorers/constraint.py) |
+| Reference scorer | Deterministic token-multiset Dice similarity and key-point token coverage. It uses no model, embedding service, or network call. | [`ReferenceScorer`, check models](../../src/arena/scorers/reference.py) |
+| Text input | Reads a named artifact through `ScorerContext.read`, which verifies its blob digest, then requires UTF-8 text. | [`read_text`](../../src/arena/scorers/constraint.py) |
+
+### Runtime path
+
+1. Construct a scorer with an artifact path and one or more typed checks. A reference scorer also receives the reference text.
+2. `score(context)` reads the artifact bytes from the context and decodes UTF-8.
+3. The scorer evaluates the checks in the configured order. JSON Schema validation uses draft 2020-12 and an empty reference registry, so external `$ref` resources are never fetched.
+4. The returned `Score` carries a normalized fraction, a pass verdict requiring every check to pass, a concise rationale, and structured evidence. Key-point evidence lists covered and missed points and records matched tokens for each covered point.
+
+### Constraints and failure behavior
+
+- Word-count bounds are inclusive. Required sections are matched against Markdown ATX headings outside fenced code blocks, with case and whitespace normalized. Keywords use whole-word/phrase matching; forbidden terms are whole-word matches and forbidden patterns are regular expressions.
+- JSON validity rejects non-standard constants such as `NaN`, syntax errors and trailing content. JSON Schema failures include stable, sorted instance paths. Markdown validity checks non-empty content, heading syntax and level jumps, and closed fenced code blocks; it is a deterministic structural check, not a complete CommonMark parser.
+- Reference similarity is multiset Dice overlap over Unicode-normalized, case-folded tokens. Key-point coverage is mean token recall per point and passes a point when it meets the configured threshold. These lexical metrics do not claim semantic equivalence.
+- Invalid scorer configuration, unreadable artifacts, non-UTF-8 data, malformed regular expressions and unresolved schema references raise `ScorerError`; they are not recorded as a failed content check. Remote schema references are not resolved over the network.
+- Evidence is deterministic and bounded where it can grow with input size. A missing key point remains listed under `missed`, with its coverage fraction retained to show partial overlap.
+
+### Verification
+
+```sh
+uv run pytest tests/scorers/test_constraint.py tests/scorers/test_reference.py
+```
