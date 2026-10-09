@@ -33,6 +33,9 @@ from arena.runners.scheduler import TrialJob
 
 CUSTOM_PREFIX = "custom:"
 OPTIONS_KEY = "orchestration"  # the key in `Contestant.params` that holds strategy options
+SOURCE_DIGEST_KEY = "orchestration_source_sha256"
+MAX_BEST_OF_N = 64
+BEST_OF_N_BATCH_SIZE = 4
 CHILD_PURPOSE = "orchestration"
 JUDGE_REPLY = re.compile(r"^\s*(\d+)\s*$")
 
@@ -153,7 +156,9 @@ class OrchestrationContext:
         self.root_span_id = root_span_id
         self._dispatch = dispatch
         self._check = check
-        self._params = {k: v for k, v in contestant.params.items() if k != OPTIONS_KEY}
+        self._params = {
+            k: v for k, v in contestant.params.items() if k not in {OPTIONS_KEY, SOURCE_DIGEST_KEY}
+        }
         self._slots: list[Span | None] = []
         self._ordinals: dict[str, int] = {}
 
@@ -258,7 +263,15 @@ async def best_of_n(context: OrchestrationContext) -> str:
         raise OrchestrationError(
             f"option 'selector' must be judge, tests or first, got {selector!r}"
         )
-    samples = await context.gather(*(context.call("sample", context.prompt) for _ in range(n)))
+    if n > MAX_BEST_OF_N:
+        raise OrchestrationError(f"option 'n' must not exceed {MAX_BEST_OF_N}, got {n}")
+    samples: list[CompletionResult] = []
+    for start in range(0, n, BEST_OF_N_BATCH_SIZE):
+        batch_size = min(BEST_OF_N_BATCH_SIZE, n - start)
+        batch = await context.gather(
+            *(context.call("sample", context.prompt) for _ in range(batch_size))
+        )
+        samples.extend(batch)
     texts = [sample.text for sample in samples]
     if n == 1 or selector == "first":
         return texts[0]
@@ -303,6 +316,32 @@ BUILTIN_STRATEGIES: Mapping[str, Strategy] = {
 }
 
 _custom_modules: dict[tuple[str, str], Strategy] = {}
+
+
+def custom_source_digest(spec: str, base_dir: Path) -> str:
+    """Return the source digest that must be included before scheduling/cache lookup."""
+    path_part = spec.removeprefix(CUSTOM_PREFIX)
+    if not path_part:
+        raise OrchestrationError("custom orchestration needs a path: custom:<path>")
+    path = Path(path_part).expanduser()
+    path = path if path.is_absolute() else base_dir / path
+    try:
+        return sha256_hex(path.read_bytes())
+    except OSError as error:
+        raise OrchestrationError(f"cannot read custom orchestration {path}: {error}") from error
+
+
+def prepare_contestant(contestant: Contestant, base_dir: Path) -> Contestant:
+    """Bind a custom strategy's source digest into contestant identity before job expansion.
+
+    Call this before `expand_jobs` / `run_jobs`; those APIs derive cache keys from contestant.id.
+    """
+    if not contestant.orchestration.startswith(CUSTOM_PREFIX):
+        return contestant
+    digest = custom_source_digest(contestant.orchestration, base_dir)
+    params = dict(contestant.params)
+    params[SOURCE_DIGEST_KEY] = digest
+    return contestant.model_copy(update={"params": freeze(params)})
 
 
 def load_custom(spec: str, base_dir: Path) -> tuple[Strategy, str]:
@@ -420,8 +459,16 @@ class Orchestrator:
         """An `Executor` for `run_jobs`; span ids derive from the scheduler's trial id."""
 
         async def execute(job: TrialJob) -> OrchestrationResult:
+            contestant = job.contestant
+            if contestant.orchestration.startswith(CUSTOM_PREFIX):
+                current_digest = custom_source_digest(contestant.orchestration, self._base_dir)
+                if contestant.params.get(SOURCE_DIGEST_KEY) != current_digest:
+                    raise OrchestrationError(
+                        "custom orchestration source changed after trial planning; "
+                        "prepare the contestant and rebuild the trial plan"
+                    )
             return await self.run(
-                job.contestant,
+                contestant,
                 job.task,
                 prompt_for(job),
                 trial_id=content_id({"run_id": run_id, "job_id": job.id}),

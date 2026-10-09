@@ -8,7 +8,7 @@
 | Sandbox contract | Validates trial identity, image, command, workspace, gateway URL and token, plus positive resource limits | [`SandboxSpec`](../../src/arena/sandbox/docker.py), [`SandboxLimits`](../../src/arena/sandbox/docker.py) |
 | Completion runner | Provides an injectable completion dispatcher and a deterministic local mock adapter | [`run_completion`](../../src/arena/runners/completion.py), [`mock_completion`](../../src/arena/runners/completion.py) |
 | Scheduler | Expands deterministic task × contestant × repeat jobs, persists trial state, caches succeeded trials, resumes missing/errored work, and enforces concurrency and subscription rests | [`expand_jobs`](../../src/arena/runners/scheduler.py), [`run_jobs`](../../src/arena/runners/scheduler.py) |
-| Orchestration runner | Composes best-of-n and planner-executor calls, loads `custom:<path>` modules, records child spans under the orchestration span, and rolls up child cost and cache metrics | [`Orchestrator`](../../src/arena/runners/orchestration.py), [`best_of_n`](../../src/arena/runners/orchestration.py), [`planner_executor`](../../src/arena/runners/orchestration.py), [`load_custom`](../../src/arena/runners/orchestration.py), [`roll_up`](../../src/arena/runners/orchestration.py) |
+| Orchestration runner | Composes best-of-n and planner-executor calls, loads `custom:<path>` modules, records child spans under the orchestration span, and rolls up child cost and cache metrics | [`Orchestrator`](../../src/arena/runners/orchestration.py), [`best_of_n`](../../src/arena/runners/orchestration.py), [`planner_executor`](../../src/arena/runners/orchestration.py), [`prepare_contestant`](../../src/arena/runners/orchestration.py), [`load_custom`](../../src/arena/runners/orchestration.py), [`roll_up`](../../src/arena/runners/orchestration.py) |
 | Run CLI | Loads suites/contestants, prints plans, runs completion jobs, lists runs and resumes by run id | [`plan`](../../src/arena/cli_run.py), [`run`](../../src/arena/cli_run.py), [`list_runs`](../../src/arena/cli_run.py) |
 
 ## Runtime path
@@ -20,7 +20,7 @@
 5. Docker enforces CPU, memory and PID limits. `asyncio.timeout` enforces the execution time limit.
 6. On normal exit, error, timeout or cancellation, `DockerSandbox.run` removes the agent container, disconnects the gateway and removes the network.
 7. `arena run` loads the completion task prompts and dispatches jobs through the scheduler. The current CLI wiring uses the deterministic mock adapter; a gateway adapter can be supplied to `run_jobs` without changing scheduler behavior.
-8. `Orchestrator.run` selects the contestant's strategy. Best-of-n samples in parallel and selects with a judge call, a supplied test check, or the first sample; planner-executor makes a plan call followed by an execution call; custom strategies load `async def run(context)` from `custom:<path>`.
+8. `prepare_contestant` hashes custom strategy source into contestant parameters before trial expansion, so a source change gets a new deterministic contestant and trial cache identity. `Orchestrator.run` then selects the strategy. Best-of-n accepts at most 64 samples and runs them in batches of four before selection with a judge call, a supplied test check, or the first sample; planner-executor makes a plan call followed by an execution call; custom strategies load `async def run(context)` from `custom:<path>`.
 9. Each child call passes a `CallContext` with its trial id, span id, parent span id, name and orchestration purpose to the dispatcher. The returned root span and child spans roll up cost, cache hits and unknown prices into `OrchestrationResult`, a `CompletionResult` the scheduler can record.
 
 ## Constraints and failure behavior
@@ -36,7 +36,8 @@
 - The CLI currently dispatches to the mock adapter, so it does not call a provider or the gateway. Non-mock gateway execution and price-informed estimates require the gateway dispatcher and matching model catalog entries to be wired in.
 - Workspace files are writable for agent output. The caller must provide a trial-scoped directory; this backend does not validate workspace contents or impose a disk quota.
 - Orchestration fails on an unknown strategy or option, malformed judge selection, unavailable test check, unreadable/invalid custom module or child call failure. Child dispatchers receive the parent span id; the database schema does not yet persist spans, so the caller must write the returned span tree and use `CallContext` to tag child `Call` records.
-- A custom module is user Python code loaded into the arena process. Its file digest is returned with the result because custom strategy source is not part of `Contestant.id`.
+- A custom module is user Python code loaded into the arena process. Call `prepare_contestant` before expanding trial jobs or checking the scheduler cache; it binds the module's SHA-256 digest into `Contestant.params` and therefore contestant/trial identity. The runner checks the source again before execution and fails if it changed after planning. `OrchestrationResult.strategy_digest` also records the digest.
+- Best-of-n requires `1 <= n <= 64` and dispatches at most four samples concurrently in sequential batches. Invalid bounds fail before any child call starts.
 
 ## Verification
 

@@ -9,12 +9,16 @@ from arena.core.modelref import ModelRef
 from arena.core.models import Contestant, Task
 from arena.runners.completion import CompletionResult
 from arena.runners.orchestration import (
+    BEST_OF_N_BATCH_SIZE,
+    MAX_BEST_OF_N,
     CallContext,
     OrchestrationError,
     Orchestrator,
     Span,
+    prepare_contestant,
     roll_up,
 )
+from arena.runners.scheduler import TrialJob
 
 
 def contestant(strategy: str, **options: object) -> Contestant:
@@ -64,6 +68,29 @@ def test_best_of_n_judge_calls_carry_parent_span_and_roll_up_metrics() -> None:
     assert calls[-1][1].count("<candidate number=") == 2
 
 
+def test_best_of_n_rejects_unbounded_n_before_dispatch() -> None:
+    calls = 0
+
+    async def dispatch(
+        _child: Contestant, _task: Task, _prompt: str, _call: CallContext
+    ) -> CompletionResult:
+        nonlocal calls
+        calls += 1
+        return CompletionResult("sample")
+
+    with pytest.raises(OrchestrationError, match=f"must not exceed {MAX_BEST_OF_N}"):
+        asyncio.run(
+            Orchestrator(dispatch).run(
+                contestant("best-of-n", n=MAX_BEST_OF_N + 1),
+                task(),
+                "prompt",
+                trial_id="trial-unbounded",
+            )
+        )
+
+    assert calls == 0
+
+
 def test_best_of_n_runs_with_the_deterministic_mock_provider() -> None:
     result = asyncio.run(
         Orchestrator().run(
@@ -76,6 +103,34 @@ def test_best_of_n_runs_with_the_deterministic_mock_provider() -> None:
 
     assert result.text == "[mock/echo] demo: do the task"
     assert result.metrics.calls == 2
+
+
+def test_best_of_n_samples_in_bounded_batches() -> None:
+    active = 0
+    peak = 0
+
+    async def dispatch(
+        _child: Contestant, _task: Task, _prompt: str, call: CallContext
+    ) -> CompletionResult:
+        nonlocal active, peak
+        if call.name == "sample":
+            active += 1
+            peak = max(peak, active)
+            await asyncio.sleep(0)
+            active -= 1
+        return CompletionResult("sample")
+
+    result = asyncio.run(
+        Orchestrator(dispatch).run(
+            contestant("best-of-n", n=BEST_OF_N_BATCH_SIZE * 2 + 1, selector="first"),
+            task(),
+            "prompt",
+            trial_id="trial-batched",
+        )
+    )
+
+    assert result.metrics.calls == BEST_OF_N_BATCH_SIZE * 2 + 1
+    assert peak <= BEST_OF_N_BATCH_SIZE
 
 
 def test_planner_executor_calls_plan_then_execute_with_child_spans() -> None:
@@ -155,6 +210,46 @@ def test_custom_strategy_loads_user_module_and_records_digest(tmp_path: Path) ->
     assert result.strategy_digest is not None
     assert calls[0].name == "custom-step"
     assert calls[0].parent_span_id == result.spans[0].id
+
+
+def test_custom_source_changes_contestant_identity_before_cache_planning(tmp_path: Path) -> None:
+    module = tmp_path / "strategy.py"
+    module.write_text("async def run(context): return 'first'\n", encoding="utf-8")
+    original = contestant("custom:strategy.py")
+    prepared_first = prepare_contestant(original, tmp_path)
+    module.write_text("async def run(context): return 'second'\n", encoding="utf-8")
+    prepared_second = prepare_contestant(original, tmp_path)
+
+    assert prepared_first.id != original.id
+    assert prepared_second.id != prepared_first.id
+    assert (
+        prepared_first.params["orchestration_source_sha256"]
+        != prepared_second.params["orchestration_source_sha256"]
+    )
+
+
+def test_custom_source_change_after_planning_fails_before_dispatch(tmp_path: Path) -> None:
+    module = tmp_path / "strategy.py"
+    module.write_text("async def run(context): return 'first'\n", encoding="utf-8")
+    prepared = prepare_contestant(contestant("custom:strategy.py"), tmp_path)
+    module.write_text("async def run(context): return 'second'\n", encoding="utf-8")
+    calls = 0
+
+    async def dispatch(
+        _child: Contestant, _task: Task, _prompt: str, _call: CallContext
+    ) -> CompletionResult:
+        nonlocal calls
+        calls += 1
+        return CompletionResult("unexpected")
+
+    async def execute() -> object:
+        return await Orchestrator(dispatch, base_dir=tmp_path).executor(
+            lambda _job: "prompt", run_id="run"
+        )(TrialJob(prepared, task(), 1))
+
+    with pytest.raises(OrchestrationError, match="source changed after trial planning"):
+        asyncio.run(execute())
+    assert calls == 0
 
 
 def test_unknown_strategy_options_fail_closed() -> None:
