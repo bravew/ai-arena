@@ -47,7 +47,7 @@ def check() -> list[str]:
         for heading in sorted(required - headings):
             failures.append(f"{page.relative_to(ROOT)}: missing required section: {heading}")
         for match in LINK.finditer(text):
-            target = match.group(1).split()[0].strip("<>\"")
+            target = match.group(1).split()[0].strip('<>"')
             if not target or target.startswith(("https://", "http://", "mailto:", "#")):
                 continue
             path_text, _, fragment = target.partition("#")
@@ -61,7 +61,9 @@ def check() -> list[str]:
                 failures.append(f"{page.relative_to(ROOT)}: missing file link: {target}")
                 continue
             if fragment and fragment not in anchors(path):
-                failures.append(f"{page.relative_to(ROOT)}: missing heading or symbol link: {target}")
+                failures.append(
+                    f"{page.relative_to(ROOT)}: missing heading or symbol link: {target}"
+                )
     return failures
 
 
@@ -72,4 +74,5 @@ if __name__ == "__main__":
         for error in errors:
             print(f"- {error}", file=sys.stderr)
         raise SystemExit(1)
-    print(f"Documentation link check passed ({len([p for p in DOCS.glob('*.md') if p.name != 'README.md'])} pages).")
+    count = len([p for p in DOCS.glob("*.md") if p.name != "README.md"])
+    print(f"Documentation link check passed ({count} pages).")
