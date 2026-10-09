@@ -1,0 +1,5 @@
+id_label: mock-b
+model: mock/canned
+params: { temperature: 0 }
+scaffold: none
+orchestration: single
