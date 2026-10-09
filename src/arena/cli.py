@@ -69,3 +69,6 @@ def main(
     ] = False,
 ) -> None:
     """Compare AI models, agents, and kits on coding and content tasks."""
+
+
+__import__("arena.cli_run")
