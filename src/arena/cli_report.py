@@ -52,7 +52,7 @@ def export(
     home: Annotated[Path | None, typer.Option("--home", help="Arena data directory.")] = None,
 ) -> None:
     """Export a validated static report bundle and its referenced blobs."""
-    if format not in {"bundle", "json"}:
+    if format != "bundle":
         typer.echo(f"unsupported export format: {format}", err=True)
         raise typer.Exit(code=1)
     data_home = home or default_home()

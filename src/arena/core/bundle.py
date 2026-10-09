@@ -248,6 +248,9 @@ def _sessions(
         if not isinstance(data, dict):
             continue
         session_id = data.get("session_id")
+        trial_id = data.get("trial_id")
+        trial = trial_by_id.get(trial_id) if isinstance(trial_id, str) else None
+        session_status = trial.status if trial is not None else "unknown"
         if kind == "session_turn" and isinstance(session_id, str):
             row = by_id.setdefault(
                 session_id,
@@ -255,7 +258,7 @@ def _sessions(
                     "id": session_id,
                     "trial_id": data.get("trial_id"),
                     "agent": _agent_for_trial(data.get("trial_id"), trial_by_id, contestant_by_id),
-                    "status": "succeeded",
+                    "status": session_status,
                     "turns": [],
                 },
             )
@@ -267,7 +270,7 @@ def _sessions(
                     "id": session_id,
                     "trial_id": data.get("trial_id"),
                     "agent": _agent_for_trial(data.get("trial_id"), trial_by_id, contestant_by_id),
-                    "status": "succeeded",
+                    "status": session_status,
                     "turns": [],
                 },
             )

@@ -210,6 +210,7 @@ def test_export_writes_a_bundle_that_validates_against_both_schemas(
     first = sessions[f"run-1-{KIT.id}-t1-1-s"]
     assert first["agent"] == "opencode"
     assert first["trial_id"] == f"run-1-{KIT.id}-t1-1"
+    assert first["status"] == "succeeded"
     assert first["turns"][0]["call_ids"] == [f"run-1-{KIT.id}-t1-1-call"]
     for artifact in bundle["artifacts"]:
         assert (out / "artifacts" / artifact["sha256"]).is_file()
@@ -371,6 +372,24 @@ def test_cli_report_says_so_when_nothing_was_excluded_or_priced(home: Path) -> N
     assert "Excluded from headline numbers" not in result.stdout
 
 
+def test_derived_session_status_uses_trial_status_and_unknown_fallback(home: Path) -> None:
+    store = Store(home / "arena.db")
+    failed_trial_id = store.execute(
+        "SELECT id FROM trials WHERE contestant_id = ? LIMIT 1", (BASE.id,)
+    ).fetchone()[0]
+    incomplete_trial_id = store.execute(
+        "SELECT id FROM trials WHERE contestant_id = ? LIMIT 1 OFFSET 1", (BASE.id,)
+    ).fetchone()[0]
+    store.execute("UPDATE trials SET status='failed' WHERE id=?", (failed_trial_id,))
+    store.execute("UPDATE trials SET status='running' WHERE id=?", (incomplete_trial_id,))
+    store.close()
+
+    records = open_run(home, "run-1")
+    sessions = {session.id: session for session in records.sessions}
+    assert sessions[f"{failed_trial_id}-s"].status == "failed"
+    assert sessions[f"{incomplete_trial_id}-s"].status == "running"
+
+
 def test_cli_export_writes_the_bundle_and_refuses_to_overwrite(home: Path, tmp_path: Path) -> None:
     out = tmp_path / "site"
 
@@ -381,6 +400,21 @@ def test_cli_export_writes_the_bundle_and_refuses_to_overwrite(home: Path, tmp_p
     validate_bundle(json.loads((out / "bundle.json").read_text(encoding="utf-8")))
     assert second.exit_code == 1
     assert "already exists" in second.output
+
+
+def test_cli_export_rejects_json_format_that_has_no_separate_output(
+    home: Path, tmp_path: Path
+) -> None:
+    out = tmp_path / "json-output"
+
+    result = CliRunner().invoke(
+        app,
+        ["export", "run-1", "--home", str(home), "--out", str(out), "--format", "json"],
+    )
+
+    assert result.exit_code == 1
+    assert "unsupported export format: json" in result.stderr
+    assert not out.exists()
 
 
 def test_cli_reports_an_unknown_run_and_a_missing_store(home: Path, tmp_path: Path) -> None:

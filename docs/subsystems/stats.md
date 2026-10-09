@@ -47,7 +47,8 @@
 - Pairwise judgments reject empty or identical contestants and unsupported outcomes or judge sources.
 - Bradley-Terry requires at least one judgment for the requested judge and positive bootstrap samples. Disconnected comparison graphs return separate components rather than implying a global ordering. A symmetric pseudo-count keeps complete-separation outcomes finite; interpretation remains component-local.
 - Pareto input requires unique contestant IDs and finite quality/resource measurements. A dollar-cost axis requires a known dollar cost for each contestant; auto mode switches to tokens/task when a cost is unknown or subscription-backed.
-- Bundle export refuses to overwrite its destination. An absent store, run, event log or artifact blob, malformed JSON, invalid event, or invalid stored model record raises a clear error; artifact digests are verified before publication.
+- Bundle export refuses to overwrite its destination. The CLI accepts only `--format bundle`; flat CSV and Parquet exports are not implemented yet. An absent store, run, event log or artifact blob, malformed JSON, invalid event, or invalid stored model record raises a clear error; artifact digests are verified before publication.
+- Event-derived sessions inherit the linked trial's status. Sessions without a valid trial link are reported as unknown and still fail bundle validation when the trial reference is missing.
 
 ## Verification
 
