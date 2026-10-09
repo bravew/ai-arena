@@ -1,0 +1,11 @@
+price_version: 2026-10-01
+models:
+  - ref: anthropic/claude-opus-5-5
+    protocols: [anthropic]
+    context: 1000000
+    efforts: {low: {effort: low}, high: {effort: high}, max: {effort: max}}
+    price_per_mtok: {in: 15.00, out: 75.00, cache_read: 1.50, cache_write: 18.75}
+    source: https://www.anthropic.com/pricing
+  - ref: anthropic/claude-opus-5-5-sub
+    protocols: [anthropic]
+    pricing: subscription

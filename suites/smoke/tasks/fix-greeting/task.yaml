@@ -1,0 +1,6 @@
+id: smoke.fix-greeting
+version: 1
+kind: agentic-code
+prompt_file: prompt.md
+scorers:
+  - { id: execution, weight: 1.0, command: "python -m pytest -q tests" }
