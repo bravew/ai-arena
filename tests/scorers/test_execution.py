@@ -38,7 +38,7 @@ BUGGY_TESTS = {
     "test_calc.py::test_mean_empty_raises",
 }
 
-PYTEST_ALL_PASS = "PASSED test_calc.py::test_a\nPASSED test_calc.py::test_b\n2 passed in 0.01s\n"
+PYTEST_ALL_PASS = "test_calc.py::test_a PASSED\ntest_calc.py::test_b PASSED\n2 passed in 0.01s\n"
 
 
 def load_fixtures(directory: Path) -> dict[str, bytes]:
@@ -205,7 +205,7 @@ def test_a_timeout_scores_zero_and_is_recorded(tmp_path: Path) -> None:
         CommandResult(1, "", "No module named pytest"),
         CommandResult(5, "no tests ran in 0.01s\n"),
         CommandResult(0, "3 passed in 0.01s\n"),
-        CommandResult(1, "1 skipped in 0.01s\n"),
+        CommandResult(1, "SKIPPED a.py::t\n1 skipped in 0.01s\n"),
         CommandResult(0, "PASSED a.py::t\n1 passed, 1 failed in 0.01s\n"),
     ],
 )

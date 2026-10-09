@@ -28,8 +28,7 @@ DEFAULT_PYTEST_COMMAND = (
     "python",
     "-m",
     "pytest",
-    "-q",
-    "-rA",
+    "-v",
     "--no-header",
     "-p",
     "no:cacheprovider",
@@ -230,6 +229,7 @@ class HiddenTestsScorer(_SandboxScorer):
                 "failed": run.failed,
                 "errors": run.errors,
                 "skipped": run.skipped,
+                "skipped_tests": run.skipped_tests,
                 "passed_tests": run.passed_tests,
                 "failed_tests": run.failed_tests,
             },
@@ -321,6 +321,7 @@ class _PytestRun:
     failed: int
     errors: int
     skipped: int
+    skipped_tests: list[str]
     passed_tests: list[str]
     failed_tests: list[str]
 
@@ -330,7 +331,15 @@ _PYTEST_SUMMARY = re.compile(
     re.MULTILINE,
 )
 _PYTEST_COUNT = re.compile(r"(\d+) ([a-z]+)")
-_PYTEST_RESULT_LINE = re.compile(r"^(PASSED|FAILED|ERROR) (\S+)", re.MULTILINE)
+_PYTEST_RESULT_LINE = re.compile(
+    r"^(?:(PASSED|FAILED|ERROR|SKIPPED) (\S+)|(\S+) (PASSED|FAILED|ERROR|SKIPPED))",
+    re.MULTILINE,
+)
+_PYTEST_VERBOSE_LINE = re.compile(
+    r"^\s*(?:(\S+)\s+(PASSED|FAILED|ERROR|SKIPPED)(?:\s+\[[^]]+\])?|"
+    r"(PASSED|FAILED|ERROR|SKIPPED)\s+(\S+))\s*$",
+    re.MULTILINE,
+)
 
 
 def _parse_pytest(result: CommandResult, scorer_id: str, trial_id: str) -> _PytestRun:
@@ -351,8 +360,18 @@ def _parse_pytest(result: CommandResult, scorer_id: str, trial_id: str) -> _Pyte
 
     passed_tests: list[str] = []
     failed_tests: list[str] = []
-    for status, test_id in _PYTEST_RESULT_LINE.findall(result.stdout):
-        (passed_tests if status == "PASSED" else failed_tests).append(test_id)
+    skipped_tests: list[str] = []
+    for leading_id, leading_status, trailing_status, trailing_id in _PYTEST_VERBOSE_LINE.findall(
+        result.stdout
+    ):
+        test_id = leading_id or trailing_id
+        status = leading_status or trailing_status
+        if status == "PASSED":
+            passed_tests.append(test_id)
+        elif status == "SKIPPED":
+            skipped_tests.append(test_id)
+        else:
+            failed_tests.append(test_id)
 
     if passed + failed + errors == 0:
         raise ScorerError(f"{scorer_id}: pytest ran no tests for trial {trial_id}")
@@ -361,7 +380,11 @@ def _parse_pytest(result: CommandResult, scorer_id: str, trial_id: str) -> _Pyte
             f"{scorer_id}: pytest exit code {result.exit_code} contradicts its summary "
             f"{summary.group('counts')!r} for trial {trial_id}"
         )
-    if len(passed_tests) != passed or len(failed_tests) != failed + errors:
+    if (
+        len(passed_tests) != passed
+        or len(failed_tests) != failed + errors
+        or len(skipped_tests) != counts.get("skipped", 0)
+    ):
         raise ScorerError(
             f"{scorer_id}: pytest result lines disagree with its summary for trial {trial_id}"
         )
@@ -370,6 +393,7 @@ def _parse_pytest(result: CommandResult, scorer_id: str, trial_id: str) -> _Pyte
         failed=failed,
         errors=errors,
         skipped=counts.get("skipped", 0),
+        skipped_tests=sorted(skipped_tests),
         passed_tests=sorted(passed_tests),
         failed_tests=sorted(failed_tests),
     )

@@ -80,7 +80,7 @@ The command, timeout and hidden test files are constructor arguments, so a task 
    files, and runs one command with the timeout.
 3. It turns the result into a `Score` whose evidence holds the command, exit code and
    parsed counts. A failing build or type-check also keeps the last 2000 characters of output.
-   For hidden tests, the evidence lists the passed and failed test IDs.
+   For hidden tests, the evidence lists the passed, failed and skipped test IDs.
 
 ### Constraints and failure behavior
 
