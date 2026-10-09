@@ -5,37 +5,62 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 from typing import Any, Protocol
 
-from pydantic import BaseModel, ConfigDict, Field, computed_field
+from pydantic import BaseModel, ConfigDict, Field
+
+from arena.core.cas import ArtifactStore
+from arena.core.models import Artifact, Score
+
+
+class ScorerError(ValueError):
+    """Invalid scorer definitions, unreadable inputs or incompatible score results."""
+
+
+class ArtifactIndex(Protocol):
+    """Which artifacts a trial produced.
+
+    The CAS stores blobs by digest only, and the CP1 schema has no trial-to-artifact
+    link, so the runner that records artifacts supplies this lookup.
+    """
+
+    def for_trial(self, trial_id: str) -> Sequence[Artifact]: ...
 
 
 class ScorerContext(BaseModel):
     """Immutable view of the stored trial inputs available to a scorer."""
 
-    model_config = ConfigDict(frozen=True, extra="forbid")
+    model_config = ConfigDict(frozen=True, extra="forbid", arbitrary_types_allowed=True)
 
     trial_id: str
-    artifacts: Mapping[str, Any] = Field(default_factory=dict)
+    artifacts: Mapping[str, Artifact] = Field(default_factory=dict)
+    blobs: ArtifactStore
     config: Mapping[str, Any] = Field(default_factory=dict)
 
+    def read(self, path: str) -> bytes:
+        """Return an artifact's bytes, verified against its digest."""
+        try:
+            artifact = self.artifacts[path]
+        except KeyError:
+            raise ScorerError(f"trial {self.trial_id} has no artifact {path!r}") from None
+        return read_artifact(self.blobs, artifact, self.trial_id)
 
-class Score(BaseModel):
-    """A version-pinned scorer result; versions form separate time series."""
 
-    model_config = ConfigDict(frozen=True, extra="forbid")
+def read_artifact(blobs: ArtifactStore, artifact: Artifact, trial_id: str) -> bytes:
+    """Read a blob; a missing, unreadable or corrupt one is an error, never empty."""
+    try:
+        return blobs.get(artifact.sha256)
+    except FileNotFoundError:
+        raise ScorerError(
+            f"missing stored artifact {artifact.sha256} for trial {trial_id}"
+        ) from None
+    except (OSError, ValueError) as exc:
+        raise ScorerError(
+            f"cannot read artifact {artifact.sha256} for trial {trial_id}: {exc}"
+        ) from exc
 
-    trial_id: str
-    scorer_id: str
-    scorer_version: str
-    value: float
-    normalized: float = Field(ge=0.0, le=1.0)
-    passed: bool | None = None
-    rationale: str = ""
-    evidence: Mapping[str, Any] = Field(default_factory=dict)
 
-    @computed_field
-    @property
-    def scorer_ref(self) -> str:
-        return f"{self.scorer_id}@{self.scorer_version}"
+def scorer_ref(score: Score) -> str:
+    """The ``scorer_id@version`` identity that keeps versions as separate series."""
+    return f"{score.scorer_id}@{score.scorer_version}"
 
 
 class Scorer(Protocol):
@@ -47,10 +72,6 @@ class Scorer(Protocol):
     def score(self, context: ScorerContext) -> Score:
         """Return a score whose trial and scorer identity match this request."""
         ...
-
-
-class ScorerError(ValueError):
-    """Invalid scorer definitions or incompatible score results."""
 
 
 def validate_score(scorer: Scorer, context: ScorerContext, score: Score) -> Score:
@@ -76,7 +97,8 @@ def aggregate_scores(
     """Return weighted normalized quality, applying the documented gate cap.
 
     Keys in ``weights`` and ``gates`` are scorer IDs or versioned ``id@version``
-    refs. A failed gate caps the aggregate at 0.3. Different versions are
+    refs. A failed gate caps the aggregate at 0.3, and a gate with no pass/fail
+    verdict is an error rather than a pass. Different versions are
     rejected together so a caller cannot accidentally mix their series.
     """
     if not scores:
@@ -94,7 +116,7 @@ def aggregate_scores(
     total_weight = 0.0
     failed_gate = False
     for score in scores:
-        ref = score.scorer_ref
+        ref = scorer_ref(score)
         if ref in seen:
             raise ScorerError(f"duplicate score for {ref}")
         seen.add(ref)
@@ -105,8 +127,10 @@ def aggregate_scores(
         if weight > 0:
             weighted_total += score.normalized * weight
             total_weight += weight
-        if score.passed is False and _is_gate(score, gates):
-            failed_gate = True
+        if _is_gate(score, gates):
+            if score.passed is None:
+                raise ScorerError(f"gate {ref} must report passed true or false")
+            failed_gate = failed_gate or not score.passed
 
     if total_weight == 0:
         raise ScorerError("at least one score must have a positive weight")
@@ -115,8 +139,8 @@ def aggregate_scores(
 
 
 def _weight_for(score: Score, weights: Mapping[str, float]) -> float:
-    return weights.get(score.scorer_ref, weights.get(score.scorer_id, 1.0))
+    return weights.get(scorer_ref(score), weights.get(score.scorer_id, 1.0))
 
 
 def _is_gate(score: Score, gates: set[str] | frozenset[str]) -> bool:
-    return score.scorer_ref in gates or score.scorer_id in gates
+    return scorer_ref(score) in gates or score.scorer_id in gates

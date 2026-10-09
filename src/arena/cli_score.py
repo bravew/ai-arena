@@ -2,96 +2,76 @@
 
 from __future__ import annotations
 
-import hashlib
 import json
-from collections.abc import Mapping, Sequence
+import sqlite3
+from collections.abc import Sequence
 from pathlib import Path
-from typing import Annotated, Any
+from typing import Annotated
 
 import typer
+
+from arena.core.cas import ArtifactStore
+from arena.core.models import Score
 from arena.core.store import Store
-
-from arena.scorers.base import Score, ScorerContext, ScorerError, validate_score
+from arena.scorers.base import (
+    ArtifactIndex,
+    ScorerContext,
+    ScorerError,
+    read_artifact,
+    validate_score,
+)
 from arena.scorers.registry import ScorerRegistry
-
-app = typer.Typer(name="score", help="Re-score a run from stored trial artifacts.", add_completion=False)
 
 
 def score_run(
     run_id: str,
     store: Store,
-    artifact_root: Path,
+    blobs: ArtifactStore,
+    index: ArtifactIndex,
     registry: ScorerRegistry,
     *,
-    scorer_refs: Sequence[str] | None = None,
+    scorer_refs: Sequence[str],
 ) -> list[Score]:
-    """Score trials from persisted artifacts and upsert version-specific results.
+    """Score a run's finished trials from stored artifacts and upsert the results.
 
-    Trial execution is never invoked here. Artifact metadata is resolved from
-    the content-addressed store and scorer references are pinned before writing.
+    Trial execution is never invoked here. Every scorer reference is resolved and
+    every artifact is read and verified against its digest before any score is
+    written, and all rows are written in one transaction, so a failure leaves the
+    existing scores untouched.
     """
+    if not scorer_refs:
+        raise ScorerError("name at least one scorer to run")
+    if store.execute("SELECT 1 FROM runs WHERE id = ?", (run_id,)).fetchone() is None:
+        raise ScorerError(f"unknown run {run_id!r}")
     trials = store.execute(
         "SELECT id FROM trials WHERE run_id = ? AND status IN ('succeeded', 'failed') ORDER BY id",
         (run_id,),
     ).fetchall()
     if not trials:
         raise ScorerError(f"run {run_id!r} has no completed trials to score")
-
-    selected_refs = tuple(scorer_refs or ())
-    if not selected_refs:
-        row = store.execute("SELECT config_json FROM runs WHERE id = ?", (run_id,)).fetchone()
-        if row is None:
-            raise ScorerError(f"unknown run {run_id!r}")
-        try:
-            config = json.loads(row["config_json"])
-            selected_refs = tuple(config["scorers"])
-        except (json.JSONDecodeError, KeyError, TypeError) as exc:
-            raise ScorerError(f"run {run_id!r} has no valid scorer list in its stored config") from exc
-    scorers = tuple(registry.get(ref) for ref in selected_refs)
+    scorers = tuple(registry.get(ref) for ref in scorer_refs)
 
     results: list[Score] = []
     for trial_row in trials:
         trial_id = str(trial_row["id"])
-        artifact_rows = store.execute(
-            "SELECT path, mime, render_hint, sha256 FROM artifacts WHERE trial_id = ? ORDER BY path",
-            (trial_id,),
-        ).fetchall()
-        artifacts: dict[str, Any] = {}
-        for artifact in artifact_rows:
-            digest = str(artifact["sha256"])
-            path = artifact_root / digest
-            if not path.is_file():
-                raise ScorerError(f"missing stored artifact {digest} for trial {trial_id}")
-            _verify_artifact(path, digest, trial_id)
-            artifacts[str(artifact["path"])] = {
-                "path": path,
-                "mime": str(artifact["mime"]),
-                "render_hint": str(artifact["render_hint"]),
-                "sha256": digest,
-            }
-
-        context = ScorerContext(trial_id=trial_id, artifacts=artifacts)
+        artifacts = {artifact.path: artifact for artifact in index.for_trial(trial_id)}
+        for artifact in artifacts.values():
+            read_artifact(blobs, artifact, trial_id)
+        context = ScorerContext(trial_id=trial_id, artifacts=artifacts, blobs=blobs)
         for scorer in scorers:
-            score = validate_score(scorer, context, scorer.score(context))
-            _save_score(store, score)
-            results.append(score)
+            results.append(validate_score(scorer, context, scorer.score(context)))
+
+    with store.transaction() as conn:
+        for score in results:
+            _save_score(conn, score)
     return results
 
 
-def _verify_artifact(path: Path, digest: str, trial_id: str) -> None:
-    try:
-        data = path.read_bytes()
-    except OSError as exc:
-        raise ScorerError(f"cannot read artifact {digest} for trial {trial_id}: {exc}") from exc
-    if hashlib.sha256(data).hexdigest() != digest:
-        raise ScorerError(f"artifact {digest} for trial {trial_id} does not match its digest")
-
-
-def _save_score(store: Store, score: Score) -> None:
-    evidence_json = json.dumps(dict(score.evidence), sort_keys=True, separators=(",", ":"))
-    store.execute(
-        "INSERT INTO scores (trial_id, scorer_id, scorer_version, value, normalized, passed, rationale, evidence_json) "
-        "VALUES (?, ?, ?, ?, ?, ?, ?, ?) "
+def _save_score(conn: sqlite3.Connection, score: Score) -> None:
+    evidence_json = json.dumps(score.evidence, sort_keys=True, separators=(",", ":"))
+    conn.execute(
+        "INSERT INTO scores (trial_id, scorer_id, scorer_version, value, normalized, passed, "
+        "rationale, evidence_json) VALUES (?, ?, ?, ?, ?, ?, ?, ?) "
         "ON CONFLICT(trial_id, scorer_id, scorer_version) DO UPDATE SET "
         "value=excluded.value, normalized=excluded.normalized, passed=excluded.passed, "
         "rationale=excluded.rationale, evidence_json=excluded.evidence_json",
@@ -110,38 +90,34 @@ def _save_score(store: Store, score: Score) -> None:
 
 def create_score_command(
     registry: ScorerRegistry,
+    index: ArtifactIndex,
     store_path: Path,
     artifact_root: Path,
 ) -> typer.Typer:
-    """Build the score command with its runtime registry and storage paths."""
+    """Build the score command with its runtime registry, artifact index and paths."""
     command = typer.Typer(
         name="score",
         help="Re-score stored trial artifacts.",
         add_completion=False,
-        invoke_without_command=True,
     )
 
-    @command.callback(invoke_without_command=True)
+    @command.command()
     def run_score(
         run_id: Annotated[str, typer.Argument(help="Run ID to score.")],
         scorers: Annotated[
-            list[str] | None,
+            list[str],
             typer.Option("--scorer", help="Scorer ID or exact scorer_id@version; repeatable."),
-        ] = None,
+        ],
     ) -> None:
         with Store(store_path) as store:
             results = score_run(
                 run_id,
                 store,
-                artifact_root,
+                ArtifactStore(artifact_root),
+                index,
                 registry,
                 scorer_refs=scorers,
             )
         typer.echo(f"Scored {len(results)} result(s) for run {run_id}.")
 
     return command
-
-
-# Keep the persistence boundary explicit for implementations and test doubles.
-StoreLike = Store
-ArtifactMap = Mapping[str, Any]

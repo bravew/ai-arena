@@ -34,7 +34,9 @@ class ScorerRegistry:
             except KeyError as exc:
                 raise ScorerError(f"unknown scorer {scorer_ref!r}") from exc
 
-        matches = [scorer for (scorer_id, _), scorer in self._scorers.items() if scorer_id == scorer_ref]
+        matches = [
+            scorer for (scorer_id, _), scorer in self._scorers.items() if scorer_id == scorer_ref
+        ]
         if not matches:
             raise ScorerError(f"unknown scorer {scorer_ref!r}")
         if len(matches) > 1:
@@ -46,7 +48,9 @@ class ScorerRegistry:
 
     def versions(self, scorer_id: str) -> tuple[str, ...]:
         """Return registered versions in stable lexical order."""
-        return tuple(sorted(version for candidate_id, version in self._scorers if candidate_id == scorer_id))
+        return tuple(
+            sorted(version for candidate_id, version in self._scorers if candidate_id == scorer_id)
+        )
 
     def __len__(self) -> int:
         return len(self._scorers)
