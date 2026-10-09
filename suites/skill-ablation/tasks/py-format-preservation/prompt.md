@@ -1,0 +1,1 @@
+Implement `format_name(first, last)` in `solution.py`. Trim surrounding whitespace from both names, collapse any run of whitespace inside a name to one space, keep the original letter case, and return `"Last, First"`. If one name is empty after trimming, return the other name alone; if both are empty, return an empty string.
