@@ -1,10 +1,12 @@
-import { useMemo, useState } from 'react';
+import { useContext, useMemo, useState } from 'react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { createBrowserRouter, RouterProvider } from 'react-router';
 import { schemaExample } from '../lib/schema/fixture';
 import { validateBundle } from '../lib/schema';
 import { AppLayout } from './routes';
 import { HomePage, PlaceholderPage } from './pages';
+import { SessionsView } from '../views/sessions/SessionsView';
+import { KitEffectView } from '../views/kit-effect/KitEffectView';
 import { BundleContext } from './state';
 
 const router = createBrowserRouter([
@@ -19,14 +21,24 @@ const router = createBrowserRouter([
       { path: 'compare', element: <PlaceholderPage title="Compare trials" /> },
       { path: 'trace', element: <PlaceholderPage title="Trace" /> },
       { path: 'run-diff', element: <PlaceholderPage title="Run diff" /> },
-      { path: 'sessions', element: <PlaceholderPage title="Sessions" /> },
-      { path: 'kit-effect', element: <PlaceholderPage title="Kit effect" /> },
+      { path: 'sessions', element: <SessionsPage /> },
+      { path: 'kit-effect', element: <KitEffectPage /> },
       { path: 'live', element: <PlaceholderPage title="Live run" /> },
       { path: 'ops', element: <PlaceholderPage title="Operations" /> },
       { path: '*', element: <PlaceholderPage title="Page not found" /> },
     ],
   },
 ]);
+
+function SessionsPage() {
+  const { bundle } = useContext(BundleContext) ?? {};
+  return bundle ? <SessionsView bundle={bundle} /> : <PlaceholderPage title="Sessions" />;
+}
+
+function KitEffectPage() {
+  const { bundle } = useContext(BundleContext) ?? {};
+  return bundle ? <KitEffectView bundle={bundle} /> : <PlaceholderPage title="Kit effect" />;
+}
 
 const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false, staleTime: 30_000 } } });
 
