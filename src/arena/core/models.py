@@ -120,6 +120,7 @@ class Task(Frozen):
     version: int
     kind: TaskKind
     prompt_file: str
+    created_at: str | None = None
     scorers: list[dict[str, Any]] = []
     pairwise: bool = False
 
