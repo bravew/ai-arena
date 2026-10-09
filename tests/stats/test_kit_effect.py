@@ -164,19 +164,38 @@ def test_planted_lift_and_zero_are_recovered_in_seeded_simulations() -> None:
         lift_trials: list[dict[str, object]] = []
         zero_trials: list[dict[str, object]] = []
         for task in range(16):
+            lift_baseline_mean = rng.uniform(0.35, 0.50)
+            zero_mean = rng.uniform(0.35, 0.65)
             for attempt in range(3):
-                baseline = rng.random() * 0.7
+                lift_baseline = rng.uniform(lift_baseline_mean - 0.25, lift_baseline_mean + 0.25)
+                lift_kit = rng.uniform(
+                    lift_baseline_mean + 0.15 - 0.25,
+                    lift_baseline_mean + 0.15 + 0.25,
+                )
                 lift_trials.extend(
                     [
-                        row(f"kl-{task}-{attempt}", "kit", str(task), attempt + 1, baseline + 0.15),
-                        row(f"bl-{task}-{attempt}", "baseline", str(task), attempt + 1, baseline),
+                        row(f"kl-{task}-{attempt}", "kit", str(task), attempt + 1, lift_kit),
+                        row(
+                            f"bl-{task}-{attempt}",
+                            "baseline",
+                            str(task),
+                            attempt + 1,
+                            lift_baseline,
+                        ),
                     ]
                 )
-                score = rng.random()
+                zero_kit = rng.uniform(zero_mean - 0.30, zero_mean + 0.30)
+                zero_baseline = rng.uniform(zero_mean - 0.30, zero_mean + 0.30)
                 zero_trials.extend(
                     [
-                        row(f"kz-{task}-{attempt}", "kit", str(task), attempt + 1, score),
-                        row(f"bz-{task}-{attempt}", "baseline", str(task), attempt + 1, score),
+                        row(f"kz-{task}-{attempt}", "kit", str(task), attempt + 1, zero_kit),
+                        row(
+                            f"bz-{task}-{attempt}",
+                            "baseline",
+                            str(task),
+                            attempt + 1,
+                            zero_baseline,
+                        ),
                     ]
                 )
         positive = compute_kit_effect(lift_trials, [], bootstrap_samples=300, seed=seed)
