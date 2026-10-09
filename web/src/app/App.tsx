@@ -5,8 +5,9 @@ import { schemaExample } from '../lib/schema/fixture';
 import { validateBundle } from '../lib/schema';
 import { AppLayout } from './routes';
 import { HomePage, PlaceholderPage } from './pages';
+import { BundleContext, useBundleState } from './state';
+import { LiveView } from '../views/live/LiveView';
 import { OpsView } from '../views/ops/OpsView';
-import { BundleContext } from './state';
 
 const router = createBrowserRouter([
   {
@@ -22,12 +23,17 @@ const router = createBrowserRouter([
       { path: 'run-diff', element: <PlaceholderPage title="Run diff" /> },
       { path: 'sessions', element: <PlaceholderPage title="Sessions" /> },
       { path: 'kit-effect', element: <PlaceholderPage title="Kit effect" /> },
-      { path: 'live', element: <PlaceholderPage title="Live run" /> },
+      { path: 'live', element: <LiveRoute /> },
       { path: 'ops', element: <OpsView /> },
       { path: '*', element: <PlaceholderPage title="Page not found" /> },
     ],
   },
 ]);
+
+function LiveRoute() {
+  const { bundle, validation } = useBundleState();
+  return <LiveView bundle={bundle ?? (validation?.ok === false ? schemaExample : undefined)} />;
+}
 
 const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false, staleTime: 30_000 } } });
 

@@ -20,7 +20,7 @@ they describe.
 | `stats.md` (planned) | Aggregation, bootstrap, ratings, Pareto, run-diff |
 | `observability.md` (planned) | Calls ledger, event stream, spans, metrics |
 | [`ops-view.md`](ops-view.md) | The Ops view: calls ledger, usage, lanes, meters and hook stats |
-| `viewer-live.md` (planned) | The viewer and the Live stage |
+| [`viewer-live.md`](viewer-live.md) | The viewer and the Live stage |
 
 ## Page template
 
