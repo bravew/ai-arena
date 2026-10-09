@@ -47,10 +47,28 @@ plug into this framework in their own PRs and extend this page.
 - The trial-to-artifact link is not in the CP1 schema yet. Until the runner provides an
   `ArtifactIndex`, `arena score` is not wired into the `arena` CLI.
 
+## Visual scorer
+
+| Part | Responsibility | Source |
+| --- | --- | --- |
+| Capture protocol | A browser captures a page at a named viewport and returns PNG bytes and console errors; tests inject a fake. | [`PageBrowser`, `PageCapture`](../../src/arena/scorers/visual.py) |
+| Playwright adapter | Lazily imports optional Playwright, launches Chromium, opens the viewer-style frame host and returns a PNG and console errors. | [`PlaywrightBrowser`](../../src/arena/scorers/visual.py) |
+| Untrusted HTML serving | Serves the frame host and selected HTML artifact from separate loopback origins. The host uses `<iframe sandbox="allow-scripts">`; the artifact response adds a restrictive CSP. Servers stop after capture, including on failures. | [`_serve`, `_host_handler`, `_artifact_handler`](../../src/arena/scorers/visual.py) |
+| `visual@1` | Captures mobile (375×812), tablet (768×1024) and desktop (1440×900); stores screenshots in the artifact blob store and puts their metadata plus per-viewport console errors in score evidence. | [`VisualScorer`](../../src/arena/scorers/visual.py) |
+
+### Visual runtime path
+
+1. `VisualScorer` selects the only HTML artifact, or uses `config.path` when the trial has multiple candidates. Missing HTML returns a failing score; an unreadable or corrupt blob raises `ScorerError`.
+2. It serves the artifact on a different loopback port from the frame host. Chromium loads the host, whose sandboxed iframe loads the artifact with scripts allowed, no same-origin permission, and a CSP that blocks network access.
+3. The browser captures each viewport and records console errors. Only after all three captures succeed are PNG blobs stored; their `Artifact` records and error lists are included in evidence.
+4. The deterministic check counts console error events across all three viewports. Zero errors passes with normalized score 1; otherwise it fails and reports `1 / (1 + error_count)`.
+
+Playwright is an optional, lazily imported dependency; this change does not add it to `pyproject.toml` or `uv.lock`. To use the real browser adapter, install Playwright and Chromium in the runtime environment. Browser launch or capture failures raise `CaptureError` (a `ScorerError`) and produce no score or screenshot writes. The artifact response CSP disables network access, scripts beyond inline scripts, and same-origin access. The loopback server serves only the selected artifact path.
+
 ## Verification
 
 ```sh
-uv run pytest tests/scorers/test_framework.py
+uv run pytest tests/scorers/test_framework.py tests/scorers/test_visual.py
 ```
 
 ## Execution scorers
