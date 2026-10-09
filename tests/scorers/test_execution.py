@@ -7,7 +7,6 @@ import tempfile
 from collections.abc import Mapping, Sequence
 from contextlib import contextmanager
 from pathlib import Path
-from types import TracebackType
 
 import pytest
 
@@ -39,9 +38,7 @@ BUGGY_TESTS = {
     "test_calc.py::test_mean_empty_raises",
 }
 
-PYTEST_ALL_PASS = (
-    "PASSED test_calc.py::test_a\nPASSED test_calc.py::test_b\n2 passed in 0.01s\n"
-)
+PYTEST_ALL_PASS = "PASSED test_calc.py::test_a\nPASSED test_calc.py::test_b\n2 passed in 0.01s\n"
 
 
 def load_fixtures(directory: Path) -> dict[str, bytes]:
@@ -109,17 +106,6 @@ class FakeSandbox:
             raise result
         return result
 
-    def __enter__(self) -> FakeSandbox:
-        return self
-
-    def __exit__(
-        self,
-        exc_type: type[BaseException] | None,
-        exc: BaseException | None,
-        tb: TracebackType | None,
-    ) -> None:
-        return None
-
 
 def make_context(tmp_path: Path, files: Mapping[str, bytes] | None = None) -> ScorerContext:
     blobs = ArtifactStore(tmp_path / "artifacts")
@@ -170,8 +156,12 @@ def test_scoring_twice_gives_identical_scores(tmp_path: Path) -> None:
 
 def test_lint_counts_findings_with_real_ruff(tmp_path: Path) -> None:
     scorer = lint_scorer(dir_sandbox, command=("python", "-m", "ruff", "check", "--no-cache", "."))
-    clean = scorer.score(make_context(tmp_path, {"clean.py": load_fixtures(GOLDEN / "lint")["clean.py"]}))
-    dirty = scorer.score(make_context(tmp_path, {"dirty.py": load_fixtures(GOLDEN / "lint")["dirty.py"]}))
+    clean = scorer.score(
+        make_context(tmp_path, {"clean.py": load_fixtures(GOLDEN / "lint")["clean.py"]})
+    )
+    dirty = scorer.score(
+        make_context(tmp_path, {"dirty.py": load_fixtures(GOLDEN / "lint")["dirty.py"]})
+    )
     assert (clean.normalized, clean.passed) == (1.0, True)
     assert dirty.value == 2
     assert dirty.normalized == pytest.approx(1 / 3)
@@ -242,7 +232,9 @@ def test_artifact_paths_cannot_leave_the_workspace(tmp_path: Path, path: str) ->
 @pytest.mark.parametrize("factory", [build_scorer, typecheck_scorer])
 def test_exit_code_scorers_pass_on_zero_and_fail_otherwise(tmp_path: Path, factory) -> None:
     fake = FakeSandbox(
-        CommandResult(0, "ok"), CommandResult(1, "", "error: bad"), CommandResult(-1, timed_out=True)
+        CommandResult(0, "ok"),
+        CommandResult(1, "", "error: bad"),
+        CommandResult(-1, timed_out=True),
     )
     scorer = factory(fake, command=("make",))
     ok, bad, hung = (scorer.score(make_context(tmp_path)) for _ in range(3))
