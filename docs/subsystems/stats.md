@@ -1,38 +1,57 @@
-# Statistics,
-
-This reference follows the subsystem design in the development plan. Implementation modules and tests are planned but are not present in the sparse CP7 launch tree; source links point to existing plan headings until implementation lands.
+# Statistics aggregation and ratings
 
 ## Responsibilities and sources of truth
 
-| Part | Responsibility | Source of truth |
-|---|---|---|
-| Statistics, ratings, and reports | Aggregate scores, quantify uncertainty, compare contestants, compute ratings and Pareto frontiers, and export reports and bundles. | [Development plan](../DEV_PLAN.md#13-delivery-plan-checkpoints) |
-| Delivery | Defines implementation stages and acceptance behavior. | [Checkpoint plan](../DEV_PLAN.md#13-delivery-plan-checkpoints) |
-| Engineering rules | Defines reference-page structure and link conventions. | [Engineering conventions](../DEV_PLAN.md#12-engineering-conventions) |
+| Part | Responsibility | Source |
+| --- | --- | --- |
+| Trial score validation and exclusions | Validate trial score input; exclude swapped, unmetered, and kit-unapplied trials from headline aggregates while counting each reason and each excluded trial | [`TrialScore`, `ExcludedTrials`, `aggregate_scores`](../../src/arena/stats/aggregate.py) |
+| Task and suite aggregation | Compute per-task means and equally weighted suite estimates and confidence intervals; compute pass@k and pass^k where pass labels are present | [`TaskAggregate`, `ContestantAggregate`, `aggregate_scores`](../../src/arena/stats/aggregate.py) |
+| Paired score comparison | Compare shared task/repeat pairs, report task win/tie/loss and a paired interval; interval crossing zero means no detectable difference | [`Aggregation.compare`, `HeadToHead`](../../src/arena/stats/aggregate.py) |
+| Pairwise judgment input | Validate contestant pairs and judgment source; preserve model and human judgments as separate leaderboard inputs | [`PairwiseJudgment`, `judgments_for`](../../src/arena/stats/pairwise.py) |
+| Bradley-Terry ratings | Fit per-judge strengths, bootstrap deterministic intervals, and expose disconnected comparison components | [`bradley_terry`, `Ratings`, `Rating`](../../src/arena/stats/ratings.py) |
+| Pareto frontier | Keep non-dominated quality/resource choices, preserving coordinate ties and using tokens/task when any cost is flat or unknown | [`pareto_frontier`, `ParetoPoint`](../../src/arena/stats/pareto.py) |
+| Cluster bootstrap | Resample tasks and repeats within sampled tasks and calculate a percentile interval with a deterministic seed | [`cluster_bootstrap_ci`](../../src/arena/stats/bootstrap.py) |
+| Run diff | Compare shared eligible task repeats; estimate and interval use the same attempt pairs, and fewer than two pairs are uncertain; report additions, removals, cost delta, and changed contestants | [`diff_runs`](../../src/arena/stats/rundiff.py) |
+| Chart series | Precompute attributed usage, latency distributions, and prompt composition; calls without a known trial are omitted | [`chart_series`](../../src/arena/stats/series.py) |
+| Session summaries | Summarize linked turns, tools, tokens, costs, duration and files by contestant, agent, model and kit; a missing trial record or incomplete call linkage remains explicitly partial/unknown | [`summarize_sessions`](../../src/arena/stats/sessions.py) |
+| Judge calibration | Compare available human labels, order swaps, output lengths, contestant families, and costs for explicitly linked judge call IDs; absent linkage or call records leaves cost unavailable | [`calibration_report`](../../src/arena/stats/judge_calibration.py) |
+| Kit effect | Pair kit and baseline trials by task and attempt, bootstrap paired score differences by task, and summarize uptake, observational invoked/not-invoked scores, exclusions, incomplete pairs, and cost delta | [`compute_kit_effect`, `KitEffect`](../../src/arena/stats/kit_effect.py) |
+| Run bundle and Markdown report | Read run snapshots and validated events, derive stats, produce schema-v2 bundle and atomically export metadata, events, series and verified artifact blobs; render a Markdown leaderboard with price version and exclusion footnotes | [`open_run`, `build_bundle`, `compute_stats`, `export_bundle`, `render_report`](../../src/arena/core/bundle.py); [`report`, `export`](../../src/arena/cli_report.py) |
 
 ## Runtime path
 
-1. Aggregation reads trial and score records from a run.
-2. Paired methods, bootstrap intervals, ratings, and run diffs produce comparison summaries.
-3. The report and export bundle include the data needed by the viewer and downstream analysis.
+1. `aggregate_scores` accepts `TrialScore` objects or mappings and validates mapping field names and types before constructing trial records.
+2. It rejects invalid scores, non-positive attempt numbers, and duplicate contestant/task/attempt combinations.
+3. Trials flagged `swapped`, `unmetered`, or `kit_unapplied` are omitted from task and suite headlines. Each active reason is incremented; an overlapping trial increments the unique excluded total once.
+4. Eligible trial scores are averaged within each task. The suite estimate is the arithmetic mean of those task means, so tasks have equal weight regardless of repeat count.
+5. For each task with complete pass labels, pass@k is the unbiased probability of at least one pass in `k` draws without replacement, `1 - C(n-c,k)/C(n,k)`. pass^k is `(c/n)**k`, the empirical chance all `k` independent repetitions pass. `k` defaults to the eligible repeat count and can be set with `pass_k`; `k` cannot exceed the count. If any pass label is missing, both are unavailable.
+6. The bootstrap draws tasks with replacement, then repeats within each selected task with replacement. Percentile endpoints form the confidence interval. A fixed default seed makes repeat reports reproducible.
+7. `Aggregation.compare` intersects eligible tasks and attempt numbers, bootstraps paired score differences, and classifies each shared task as a win, tie, or loss. If there are no shared tasks/repeats, it raises `ValueError`.
+8. `PairwiseJudgment` validates input and labels it as model-judge or human. `judgments_for` and `bradley_terry` filter by exactly one source, keeping the resulting leaderboards separate.
+9. `bradley_terry` builds comparison connected components, fits each independently with a symmetric half-win pseudo-count per directed pair, and bootstraps outcomes with a seeded PRNG. Each component has its own geometric-mean-one scale. `Ratings.leaderboard` returns separate rankings per component, and `global_leaderboard` raises when the graph is disconnected. Bootstrap intervals use linear interpolation between order statistics.
+10. `pareto_frontier` maximizes quality while minimizing the chosen resource. Auto mode uses tokens/task whenever any contestant is subscription-backed or has unknown dollar cost; cost labels for subscription-backed trials remain `flat`. Exact coordinate ties remain on the frontier.
+11. `compute_kit_effect` pairs kit and baseline trials on exact `(task_id, attempt)` keys. It omits pairs where either trial has an exclusion flag, reports unmatched and excluded pairs separately, and uses task-cluster bootstrap intervals for paired differences.
+12. For each skill, uptake counts kit-arm sessions with listed, loaded, and invoked events. The invoked/not-invoked score intervals are an observational split. Cost delta is the mean kit-minus-baseline cost over complete eligible pairs with cost data on both arms.
+13. `open_run` loads a run's frozen contestant config, relational rows, artifact metadata and `runs/<id>/events.jsonl`; event-derived session turns are linked to contestant agent IDs. `compute_stats` runs aggregation, chart series, session summaries, kit effects, optional ratings, and an optional baseline run diff. `report` renders the Markdown view; `export_bundle` validates metadata and events and atomically writes metadata, calls summary, events, series, stats, manifest digests and content-addressed artifact blobs.
 
 ## Constraints and failure behavior
 
-Synthetic fixtures with planted ground truth verify recovery and false-positive behavior. `swapped` and `unmetered` trials are excluded from headline metrics and disclosed; observational kit splits are labeled as observational.
-
-- This branch does not yet contain the subsystem implementation or its tests. Future source paths are described in the plan and are not linked as existing files.
-- Keep source links on stable headings or symbols; do not use line-number links.
+- Scores must be finite and within `[0, 1]`; identifiers must be non-empty; attempt and exclusion flags have strict types.
+- Mapping input rejects missing required fields and unknown fields with `ValueError`.
+- Exclusion footnotes report counts by reason; when multiple reasons apply to one trial, reason counts overlap but `total` counts that trial once.
+- A contestant with no eligible trials has no suite estimate or interval.
+- Kit-effect results with no complete eligible pair have no difference interval. Unmatched trials and complete-but-excluded pairs are counted separately; excluded trial reason counts can overlap while `total` counts each trial once.
+- A skill with no observed events has no uptake row. `kit_installed_skills_not_used` requires complete session telemetry for eligible kit trials; if coverage is incomplete or any session is partial, status is `incomplete_telemetry`. Partial sessions are excluded from uptake and observational splits. Observational score groups include only kit trials with complete session telemetry, so trials without a complete session row are unobserved rather than not-invoked. Unavailable invoked/not-invoked groups have no interval.
+- The percentile bootstrap is a simple two-stage cluster bootstrap; it does not model scorer uncertainty or missing task populations.
+- pass@k and pass^k are unavailable for a task unless every eligible trial has a boolean `passed` label.
+- Pairwise judgments reject empty or identical contestants and unsupported outcomes or judge sources.
+- Bradley-Terry requires at least one judgment for the requested judge and positive bootstrap samples. Disconnected comparison graphs return separate components rather than implying a global ordering. A symmetric pseudo-count keeps complete-separation outcomes finite; interpretation remains component-local.
+- Pareto input requires unique contestant IDs and finite quality/resource measurements. A dollar-cost axis requires a known dollar cost for each contestant; auto mode switches to tokens/task when a cost is unknown or subscription-backed.
+- Bundle export refuses to overwrite its destination. The CLI accepts only `--format bundle`; flat CSV and Parquet exports are not implemented yet. An absent store, run, event log or artifact blob, malformed JSON, invalid event, or invalid stored model record raises a clear error; artifact digests are verified before publication.
+- Event-derived sessions inherit the linked trial's status. Sessions without a valid trial link are reported as unknown and still fail bundle validation when the trial reference is missing.
 
 ## Verification
 
-Run the planned subsystem check from the repository root:
-
 ```sh
 uv run pytest tests/stats
-```
-
-Check all subsystem reference links with:
-
-```sh
-uv run python scripts/check_doc_links.py
 ```

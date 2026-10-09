@@ -1,5 +1,6 @@
 """The `arena` command line. Subcommands are added by their own modules."""
 
+from importlib import import_module
 from pathlib import Path
 from typing import Annotated
 
@@ -8,8 +9,10 @@ import yaml
 
 from arena import __version__
 from arena.cli_selfcheck import selfcheck
+from arena.cli_score import create_score_command
 from arena.core.config import validate_document
 from arena.providers.config import parse_yaml, reject_plaintext_secrets
+from arena.scorers.registry import default_registry
 
 app = typer.Typer(
     name="arena",
@@ -70,6 +73,7 @@ def selfcheck_command(
 ) -> None:
     """Run trusted task scorer commands with host privileges against oracle and null."""
     selfcheck(paths, trust_task_code=trust_task_code)
+app.command("score")(create_score_command(default_registry()))
 
 
 @app.callback()
@@ -85,3 +89,6 @@ def main(
     ] = False,
 ) -> None:
     """Compare AI models, agents, and kits on coding and content tasks."""
+
+
+import_module("arena.cli_report")
