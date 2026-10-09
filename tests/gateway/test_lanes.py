@@ -111,6 +111,71 @@ def test_streaming_waiter_sends_sse_keepalive_without_holding_lane_lock(
     asyncio.run(scenario())
 
 
+def test_keepalive_callback_cannot_extend_queue_deadline(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(lanes, "KEEPALIVE_SECONDS", 0.001)
+
+    async def scenario() -> None:
+        lane = KeyLane(concurrency=1, queue=1, queue_wait=0.02)
+        await lane.acquire()
+        started = asyncio.Event()
+
+        async def blocked_keepalive() -> None:
+            started.set()
+            await asyncio.Event().wait()
+
+        waiting = asyncio.create_task(lane.acquire(streaming=True, keepalive=blocked_keepalive))
+        await started.wait()
+        with pytest.raises(LaneRejected):
+            await asyncio.wait_for(waiting, timeout=0.1)
+        assert lane.queued == 0
+        await lane.release()
+
+    asyncio.run(scenario())
+
+
+def test_keepalive_uses_fixed_deadline_despite_frequent_notifications(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(lanes, "KEEPALIVE_SECONDS", 0.04)
+
+    async def scenario() -> None:
+        lane = KeyLane(concurrency=1, queue=1, queue_wait=0.2)
+        await lane.acquire()
+        sent = asyncio.Event()
+
+        async def send_comment() -> None:
+            sent.set()
+
+        waiting = asyncio.create_task(lane.acquire(streaming=True, keepalive=send_comment))
+        for _ in range(30):
+            async with lane._condition:
+                lane._condition.notify_all()
+            await asyncio.sleep(0.003)
+        assert sent.is_set()
+        await lane.release()
+        await waiting
+        await lane.release()
+
+    asyncio.run(scenario())
+
+
+def test_lane_pool_bounds_distinct_keys_without_evicting_live_lanes() -> None:
+    pool = LanePool(concurrency=1, max_keys=2)
+    first = pool.for_key("provider:key-a")
+    second = pool.for_key("provider:key-b")
+    assert pool.for_key("provider:key-a") is first
+    with pytest.raises(lanes.LanePoolFull):
+        pool.for_key("provider:key-c")
+    assert pool.for_key("provider:key-b") is second
+
+
+def test_lane_pool_requires_positive_key_limit() -> None:
+    with pytest.raises(ValueError, match="max_keys"):
+        LanePool(max_keys=0)
+
+
 def test_adaptive_concurrency_halves_on_429_and_recovers_after_five_successes() -> None:
     limit = AdaptiveConcurrency(maximum=16)
     assert limit.current == 16

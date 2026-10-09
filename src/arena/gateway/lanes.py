@@ -26,6 +26,10 @@ class LaneRejected(Exception):
         return {"Retry-After": str(self.retry_after)}
 
 
+class LanePoolFull(Exception):
+    """The pool has reached its configured limit of distinct lane keys."""
+
+
 @dataclass(slots=True)
 class AdaptiveConcurrency:
     """A concurrency limit that backs off on 429 and recovers after successes."""
@@ -131,6 +135,7 @@ class KeyLane:
             self._waiters.append(waiter)
             self._condition.notify_all()
 
+        next_keepalive = started + KEEPALIVE_SECONDS
         try:
             while True:
                 send_keepalive = False
@@ -149,13 +154,24 @@ class KeyLane:
                     until_rate_slot = self._seconds_until_rate_slot(now)
                     wait_for = min(remaining, until_rate_slot)
                     if streaming and keepalive is not None:
-                        wait_for = min(wait_for, KEEPALIVE_SECONDS)
+                        wait_for = min(wait_for, max(0.0, next_keepalive - now))
                     try:
                         await asyncio.wait_for(self._condition.wait(), timeout=max(wait_for, 0.001))
                     except TimeoutError:
-                        send_keepalive = streaming and keepalive is not None
+                        send_keepalive = (
+                            streaming
+                            and keepalive is not None
+                            and self._clock() >= next_keepalive
+                        )
                 if send_keepalive and keepalive is not None:
-                    await keepalive()
+                    try:
+                        callback_timeout = max(0.0, deadline - self._clock())
+                        await asyncio.wait_for(keepalive(), timeout=callback_timeout)
+                    except TimeoutError:
+                        raise LaneRejected(self._retry_after(self._clock())) from None
+                    next_keepalive += KEEPALIVE_SECONDS
+                    while next_keepalive <= self._clock():
+                        next_keepalive += KEEPALIVE_SECONDS
         finally:
             async with self._condition:
                 with suppress(ValueError):
@@ -209,9 +225,17 @@ class KeyLane:
 
 
 class LanePool:
-    """Lazily create independent lanes keyed by provider key or subscription account."""
+    """Lazily create independent lanes with a bounded number of distinct keys."""
 
-    def __init__(self, **lane_options: int | float | bool | None) -> None:
+    def __init__(
+        self,
+        *,
+        max_keys: int = 4096,
+        **lane_options: int | float | bool | None,
+    ) -> None:
+        if max_keys < 1:
+            raise ValueError("max_keys must be positive")
+        self._max_keys = max_keys
         self._lane_options = lane_options
         self._lanes: dict[str, KeyLane] = {}
 
@@ -219,5 +243,7 @@ class LanePool:
         if not key:
             raise ValueError("lane key cannot be empty")
         if key not in self._lanes:
+            if len(self._lanes) >= self._max_keys:
+                raise LanePoolFull("gateway lane pool has reached its distinct-key limit")
             self._lanes[key] = KeyLane(**self._lane_options)  # type: ignore[arg-type]
         return self._lanes[key]
