@@ -21,7 +21,7 @@ export function LiveView({ bundle: input }: { bundle: unknown }) {
 function LiveRun({ bundle }: { bundle: LiveBundle }) {
   const [source, setSource] = useState<LiveSource>(() => new ReplaySource(fixtureEvents));
   const [events, setEvents] = useState<RunEvent[]>(fixtureEvents);
-  const [cursor, setCursor] = useState(fixtureEvents.length);
+  const [cursor, setCursor] = useState(0);
   const [playing, setPlaying] = useState(false);
   const [rankMode, setRankMode] = useState(false);
   const [sourceError, setSourceError] = useState<string>();
@@ -30,13 +30,15 @@ function LiveRun({ bundle }: { bundle: LiveBundle }) {
   const [observedFrames, setObservedFrames] = useState(0);
   const stageRef = useRef<HTMLElement>(null);
   const [visible, setVisible] = useState(false);
+  const [documentVisible, setDocumentVisible] = useState(() => document.visibilityState !== 'hidden');
   const prefersReducedMotion = useReducedMotion();
   const totals = ledgerTotals(bundle);
-  const snapshot = useMemo(() => reduceEvents(events.slice(0, cursor), bundle), [bundle, cursor, events]);
+  const snapshot = useMemo(() => reduceEvents(events.slice(0, cursor)), [cursor, events]);
   const contestants = bundle.contestants;
   const trials = [...snapshot.trials.entries()].map(([id, trial]) => ({ id, ...trial }));
-  const completed = trials.filter((trial) => ['succeeded', 'failed', 'errored', 'timeout', 'skipped'].includes(trial.status)).length;
   const currentEvents = events.slice(0, cursor);
+  const boardTrials = [...trials, ...bundle.trials.filter((trial) => !snapshot.trials.has(trial.id) && currentEvents.some((event) => event.ref === trial.id && (event.kind === 'trial_queued' || event.kind === 'trial_started'))).map((trial) => ({ id: trial.id, contestantId: trial.contestant_id, taskId: trial.task_id, status: 'queued' }))];
+  const completed = trials.filter((trial) => ['succeeded', 'failed', 'errored', 'timeout', 'skipped'].includes(trial.status)).length;
 
   useEffect(() => {
     void source.read().then(setEvents).catch((error: unknown) => setSourceError(error instanceof Error ? error.message : String(error)));
@@ -51,6 +53,12 @@ function LiveRun({ bundle }: { bundle: LiveBundle }) {
   }, [cursor, events.length, playing, prefersReducedMotion]);
 
   useEffect(() => {
+    const visibilityChanged = () => setDocumentVisible(document.visibilityState !== 'hidden');
+    document.addEventListener('visibilitychange', visibilityChanged);
+    return () => document.removeEventListener('visibilitychange', visibilityChanged);
+  }, []);
+
+  useEffect(() => {
     const node = stageRef.current;
     if (!node) return;
     const observer = new IntersectionObserver(([entry]) => setVisible(entry?.isIntersecting ?? false));
@@ -59,7 +67,7 @@ function LiveRun({ bundle }: { bundle: LiveBundle }) {
   }, []);
 
   useEffect(() => {
-    if (prefersReducedMotion || !visible || document.visibilityState === 'hidden' || !playing) {
+    if (prefersReducedMotion || !visible || !documentVisible || !playing) {
       if (frameRef.current !== undefined) cancelAnimationFrame(frameRef.current);
       frameRef.current = undefined;
       return;
@@ -85,7 +93,7 @@ function LiveRun({ bundle }: { bundle: LiveBundle }) {
       if (frameRef.current !== undefined) cancelAnimationFrame(frameRef.current);
       frameRef.current = undefined;
     };
-  }, [playing, prefersReducedMotion, visible]);
+  }, [documentVisible, playing, prefersReducedMotion, visible]);
 
   const play = () => {
     if (prefersReducedMotion) { setCursor(events.length); setPlaying(false); return; }
@@ -104,7 +112,7 @@ function LiveRun({ bundle }: { bundle: LiveBundle }) {
     <section className="live-summary" aria-label="Run counters"><div><strong>{completed} / {totals.trials}</strong><span>trials completed</span></div><div><strong>{snapshot.calls.size} / {totals.calls}</strong><span>model calls</span></div><div><strong>{snapshot.trials.size}</strong><span>trials observed</span></div><div><strong>{currentEvents.length} / {events.length}</strong><span>events replayed</span></div></section>
     <p className="live-caption" aria-live="polite" aria-atomic="true">{snapshot.latestCaption}</p>
     {sourceError && <p className="live-error" role="alert">{sourceError}</p>}
-    <section className="panel live-stage" ref={stageRef} role="region" aria-label="Animated stage" data-frame-count={prefersReducedMotion || !visible || !playing || document.visibilityState === 'hidden' ? 0 : observedFrames}>
+    <section className="panel live-stage" ref={stageRef} role="region" aria-label="Animated stage" data-frame-count={prefersReducedMotion || !visible || !documentVisible || !playing ? 0 : observedFrames}>
       <header className="live-panel-heading"><div><div className="eyebrow">CALL ROUTING</div><h3>Run stage</h3></div><span className="live-state">{snapshot.complete ? 'Run complete' : source instanceof ReplaySource ? 'Replay' : 'Live source'}</span></header>
       <div className="stage-map">
         <div className="stage-entities"><strong>Contestants</strong>{contestants.map((c) => <div className="stage-entity" key={c.id}><i style={{ '--series-color': contestantColor(c.id) } as CSSProperties} aria-hidden="true" />{c.label ?? c.id}<small>{trials.filter((t) => t.contestantId === c.id && ['succeeded', 'failed', 'errored', 'timeout', 'skipped'].includes(t.status)).length} complete</small></div>)}</div>
@@ -117,9 +125,9 @@ function LiveRun({ bundle }: { bundle: LiveBundle }) {
     </section>
     <section className="live-panels">
       <section className="panel" role="region" aria-label="Race chart"><header className="live-panel-heading"><div><div className="eyebrow">PROGRESS</div><h3>Score vs. completed trials</h3></div><div className="live-controls"><button type="button" aria-pressed={!rankMode} onClick={() => setRankMode(false)}>Score</button><button type="button" aria-pressed={rankMode} onClick={() => setRankMode(true)}>Rank</button></div></header><RaceChart bundle={bundle} events={currentEvents} rankMode={rankMode} /><div className="table-wrap"><table aria-label="Race chart facts"><thead><tr><th>Contestant</th><th>Completed trials</th><th>Mean score</th><th>Rank</th></tr></thead><tbody>{raceRows(bundle, currentEvents).map((row) => <tr key={row.id}><td><span className="live-legend"><i style={{ '--series-color': contestantColor(row.id) } as CSSProperties} />{row.label}</span></td><td>{row.completed}</td><td>{row.score === null ? '—' : row.score.toFixed(3)}</td><td>{row.rank ?? '—'}</td></tr>)}</tbody></table></div></section>
-      <section className="panel" role="region" aria-label="Trial board"><header className="live-panel-heading"><div><div className="eyebrow">TASK × CONTESTANT</div><h3>Trial board</h3></div><span className="live-state">{completed} completed</span></header><TrialBoard trials={trials} contestants={contestants} /><div className="table-wrap"><table aria-label="Trial board facts"><thead><tr><th>Task</th><th>Contestant</th><th>Attempt</th><th>Status</th></tr></thead><tbody>{bundle.trials.map((trial) => { const live = snapshot.trials.get(trial.id); return <tr key={trial.id}><td>{trial.task_id}</td><td>{contestants.find((c) => c.id === trial.contestant_id)?.label ?? trial.contestant_id}</td><td>#{trial.attempt}</td><td>{live?.status ?? trial.status}</td></tr>; })}</tbody></table></div></section>
+      <section className="panel" role="region" aria-label="Trial board"><header className="live-panel-heading"><div><div className="eyebrow">TASK × CONTESTANT</div><h3>Trial board</h3></div><span className="live-state">{completed} completed</span></header><TrialBoard trials={boardTrials} contestants={contestants} /><div className="table-wrap"><table aria-label="Trial board facts"><thead><tr><th>Task</th><th>Contestant</th><th>Attempt</th><th>Status</th></tr></thead><tbody>{bundle.trials.map((trial) => { const live = snapshot.trials.get(trial.id); return <tr key={trial.id}><td>{trial.task_id}</td><td>{contestants.find((c) => c.id === trial.contestant_id)?.label ?? trial.contestant_id}</td><td>#{trial.attempt}</td><td>{live?.status ?? 'queued'}</td></tr>; })}</tbody></table></div></section>
     </section>
-    <section className="panel live-replay"><header className="live-panel-heading"><div><div className="eyebrow">EVENT LOG</div><h3>Replay controls</h3></div><div className="live-controls"><button type="button" onClick={play} aria-label={playing ? 'Pause replay' : 'Play replay'}>{playing ? 'Pause replay' : 'Play replay'}</button><button type="button" onClick={() => { setPlaying(false); setCursor(0); }} aria-label="Reset replay">Reset replay</button></div></header><label htmlFor="replay-position">{cursor} / {events.length} events</label><input id="replay-position" type="range" min="0" max={events.length} value={Math.min(cursor, events.length)} onChange={(event) => { setPlaying(false); setCursor(Number(event.currentTarget.value)); }} /><ol className="event-list">{snapshot.events.slice(-5).reverse().map((event) => <li key={event.seq}><span>#{event.seq}</span><strong>{event.kind.replaceAll('_', ' ')}</strong><time>{event.ts}</time></li>)}</ol></section>
+    <section className="panel live-replay"><header className="live-panel-heading"><div><div className="eyebrow">EVENT LOG</div><h3>Replay controls</h3></div><div className="live-controls"><button type="button" onClick={play} aria-label={playing ? 'Pause replay' : 'Play replay'}>{playing ? 'Pause replay' : 'Play replay'}</button><button type="button" onClick={() => { setPlaying(false); setCursor(0); }} aria-label="Reset replay">Reset replay</button></div></header><label htmlFor="replay-position"><span>{cursor} / {events.length} events</span></label><input id="replay-position" type="range" min="0" max={events.length} value={Math.min(cursor, events.length)} onChange={(event) => { setPlaying(false); setCursor(Number(event.currentTarget.value)); }} /><ol className="event-list">{snapshot.events.slice(-5).reverse().map((event) => <li key={event.seq}><span>#{event.seq}</span><strong>{event.kind.replaceAll('_', ' ')}</strong><time>{event.ts}</time></li>)}</ol></section>
   </div>;
 }
 
@@ -144,7 +152,8 @@ function TrialBoard({ trials, contestants }: { trials: { id: string; contestantI
 function statusMark(status: string | undefined): string { return status === 'succeeded' ? '✓' : status === 'running' ? '●' : status === 'failed' || status === 'errored' ? '!' : status ? '◌' : '—'; }
 
 function raceRows(bundle: LiveBundle, events: RunEvent[]) {
-  const trialStates = reduceEvents(events, bundle).trials;
+  const snapshot = reduceEvents(events);
+  const trialStates = snapshot.trials;
   const scoresByTrial = new Map<string, number[]>();
   for (const event of events) if (event.kind === 'score_added' && event.ref) {
     const value = event.data?.['normalized'];
@@ -152,8 +161,8 @@ function raceRows(bundle: LiveBundle, events: RunEvent[]) {
   }
   const rows = bundle.contestants.map((contestant) => {
     const contestantTrials = bundle.trials.filter((trial) => trial.contestant_id === contestant.id);
-    const completed = contestantTrials.filter((trial) => ['succeeded', 'failed', 'errored', 'timeout', 'skipped'].includes(trialStates.get(trial.id)?.status ?? trial.status)).length;
-    const values = contestantTrials.flatMap((trial) => scoresByTrial.get(trial.id) ?? bundle.scores.filter((score) => score.trial_id === trial.id).map((score) => score.normalized));
+    const completed = contestantTrials.filter((trial) => ['succeeded', 'failed', 'errored', 'timeout', 'skipped'].includes(trialStates.get(trial.id)?.status ?? 'queued')).length;
+    const values = contestantTrials.flatMap((trial) => scoresByTrial.get(trial.id) ?? []);
     return { id: contestant.id, label: contestant.label ?? contestant.id, completed, score: values.length ? values.reduce((sum, value) => sum + value, 0) / values.length : null, rank: null as number | null };
   });
   [...rows].sort((a, b) => (b.score ?? -Infinity) - (a.score ?? -Infinity)).forEach((row, index) => { row.rank = row.score === null ? null : index + 1; });

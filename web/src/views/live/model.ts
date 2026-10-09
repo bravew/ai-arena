@@ -1,3 +1,4 @@
+import { validateEventStream } from '../../lib/schema/validate';
 import type { Bundle, RunEvent, TrialStatus } from '../../lib/schema';
 
 export type LiveBundle = Pick<Bundle, 'run' | 'contestants' | 'trials' | 'calls' | 'scores'>;
@@ -21,7 +22,7 @@ export class ReplaySource implements LiveSource {
 }
 
 export class LongPollSource implements LiveSource {
-  constructor(private readonly url: string, private readonly runId: string, private readonly fetcher: typeof fetch = fetch) {}
+  constructor(private readonly url: string, private readonly runId: string, private readonly fetcher: typeof fetch = (...args) => globalThis.fetch(...args)) {}
   async read(): Promise<RunEvent[]> { return this.fetchEvents(0, 0, new AbortController().signal); }
   subscribe(onEvents: (events: RunEvent[]) => void, onError: (error: Error) => void): () => void {
     const controller = new AbortController();
@@ -52,7 +53,9 @@ export class LongPollSource implements LiveSource {
     if (!response.ok) throw new Error(`Live event request failed (${response.status})`);
     const body: unknown = await response.json();
     if (!Array.isArray(body)) throw new Error('Live event response must be an array');
-    return body as RunEvent[];
+    const validated = validateEventStream(body.map((event) => JSON.stringify(event)).join('\n'));
+    if (!validated.ok) throw new Error(`Invalid live event batch: ${validated.issues.map((issue) => `${issue.path} ${issue.message}`).join('; ')}`);
+    return validated.value;
   }
 }
 
@@ -64,10 +67,10 @@ export function parseLiveBundle(input: unknown): LiveBundle | undefined {
   return { run: value.run, contestants: value.contestants, trials: value.trials, calls: value.calls, scores: value.scores };
 }
 
-export function reduceEvents(events: RunEvent[], bundle?: LiveBundle): LiveSnapshot {
+export function reduceEvents(events: RunEvent[]): LiveSnapshot {
   const ordered = [...events].sort((a, b) => a.seq - b.seq);
-  const trials = new Map<string, { contestantId: string; taskId: string; status: TrialStatus }>((bundle?.trials ?? []).map((trial) => [trial.id, { contestantId: trial.contestant_id, taskId: trial.task_id, status: trial.status }]));
-  const calls = new Map((bundle?.calls ?? []).map((call) => [call.id, { trialId: call.trial_id ?? '', contestantId: bundle?.trials.find((trial) => trial.id === call.trial_id)?.contestant_id ?? '', status: call.status === null ? 'unknown' : call.status >= 200 && call.status < 300 ? 'succeeded' : 'failed' }]));
+  const trials = new Map<string, { contestantId: string; taskId: string; status: TrialStatus }>();
+  const calls = new Map<string, { trialId: string; contestantId: string; status: string }>();
   let latestCaption = 'Waiting for run events.';
   let complete = false;
   for (const event of ordered) {
