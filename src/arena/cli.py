@@ -7,6 +7,7 @@ import typer
 import yaml
 
 from arena import __version__
+from arena.cli_selfcheck import selfcheck
 from arena.core.config import validate_document
 from arena.providers.config import parse_yaml, reject_plaintext_secrets
 
@@ -54,6 +55,14 @@ def validate(
             typer.echo(issue, err=True)
         raise typer.Exit(code=1)
     typer.echo(f"Validated {len(files)} config file(s).")
+
+
+@app.command(name="selfcheck")
+def selfcheck_command(
+    paths: Annotated[list[Path], typer.Argument(help="Suite directories or task.yaml files.")],
+) -> None:
+    """Run oracle and null solutions through executable task tests."""
+    selfcheck(paths)
 
 
 @app.callback()
