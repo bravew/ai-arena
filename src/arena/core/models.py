@@ -270,6 +270,25 @@ class Artifact(Frozen):
     path: str
     mime: str
     render_hint: RenderHint
+    trial_id: str | None = None
+
+
+class RunProvenance(Frozen):
+    origin: Literal["native", "imported"] = "native"
+    verification: Literal["verified", "unverified"] = "verified"
+    importer: str | None = None
+    importer_version: str | None = None
+    source_ref: str | None = None
+
+    @field_validator("verification")
+    @classmethod
+    def verification_matches_origin(
+        cls, verification: Literal["verified", "unverified"], info: Any
+    ) -> Literal["verified", "unverified"]:
+        expected = "verified" if info.data.get("origin", "native") == "native" else "unverified"
+        if verification != expected:
+            raise ValueError("verification must match provenance origin")
+        return verification
 
 
 class Score(Frozen):
