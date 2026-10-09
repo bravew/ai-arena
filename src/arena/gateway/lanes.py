@@ -159,9 +159,7 @@ class KeyLane:
                         await asyncio.wait_for(self._condition.wait(), timeout=max(wait_for, 0.001))
                     except TimeoutError:
                         send_keepalive = (
-                            streaming
-                            and keepalive is not None
-                            and self._clock() >= next_keepalive
+                            streaming and keepalive is not None and self._clock() >= next_keepalive
                         )
                 if send_keepalive and keepalive is not None:
                     try:
