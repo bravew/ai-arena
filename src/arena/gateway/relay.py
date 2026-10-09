@@ -59,7 +59,7 @@ def prepare_relay(
         )
         if not effort.added_parameters:
             return PreparedRelay(request.body, request.payload, False, effort.effort_applied)
-        encoded = _merge_json_object(request.body, effort.added_parameters)
+        encoded = _merge_json_object(request.body, request.payload, effort.added_parameters)
         return PreparedRelay(encoded, effort.parameters, False, effort.effort_applied)
 
     translated_payload = translate_request(
@@ -79,9 +79,15 @@ def prepare_relay(
     return PreparedRelay(body, effort.parameters, True, effort.effort_applied)
 
 
-def _merge_json_object(body: bytes, added: Mapping[str, Any]) -> bytes:
-    """Insert mapped parameters before the final object brace without reserializing it."""
+def _merge_json_object(body: bytes, payload: Mapping[str, Any], added: Mapping[str, Any]) -> bytes:
+    """Insert mapped parameters into matching JSON object bytes without reserializing."""
     text = body.decode("utf-8")
+    try:
+        decoded = json.loads(text)
+    except json.JSONDecodeError as exc:
+        raise ValueError("same-protocol effort mapping requires a JSON object body") from exc
+    if not isinstance(decoded, dict) or decoded != payload:
+        raise ValueError("same-protocol effort mapping body does not match decoded payload")
     brace = text.rfind("}")
     if brace < 0 or text[brace + 1 :].strip():
         raise ValueError("same-protocol effort mapping requires a JSON object body")
@@ -102,7 +108,12 @@ class UpstreamAttemptsExhausted(Exception):
     """All retryable upstream attempts failed before a response byte was sent."""
 
 
+class BadUpstreamReply(Exception):
+    """The upstream completed without sending any response bytes."""
+
+
 UpstreamAttempt = Callable[[], Awaitable[AsyncIterator[bytes]]]
+_RETRYABLE_UPSTREAM_ERRORS = (ConnectionError, TimeoutError, BadUpstreamReply)
 
 
 async def relay_stream(
@@ -122,8 +133,10 @@ async def relay_stream(
                     continue
                 sent_byte = True
                 yield chunk
-            return
-        except Exception as exc:
+            if sent_byte:
+                return
+            raise BadUpstreamReply("upstream completed before sending response bytes")
+        except _RETRYABLE_UPSTREAM_ERRORS as exc:
             if sent_byte:
                 raise
             last_error = exc

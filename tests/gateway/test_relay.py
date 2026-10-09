@@ -10,6 +10,7 @@ import pytest
 
 from arena.gateway.effort import apply_effort
 from arena.gateway.relay import (
+    BadUpstreamReply,
     RelayRequest,
     UpstreamAttemptsExhausted,
     prepare_relay,
@@ -53,6 +54,20 @@ def test_same_protocol_effort_merge_preserves_existing_bytes_and_cache_markers()
         b',"thinking":{"type":"enabled"}}  '
     )
     assert prepared.effort_applied == "high"
+
+
+def test_same_protocol_effort_merge_rejects_body_payload_mismatch() -> None:
+    request = RelayRequest(
+        body=b'{"model":"example/model","messages":[]}',
+        payload={"model": "example/model", "messages": ["different"]},
+        source_protocol="anthropic",
+        target_protocol="anthropic",
+        effort="high",
+        effort_mapping={"high": {"thinking": {"type": "enabled"}}},
+    )
+
+    with pytest.raises(ValueError, match="body does not match decoded payload"):
+        prepare_relay(request, translator=_unexpected_translator)
 
 
 def test_same_protocol_already_mapped_effort_keeps_original_bytes() -> None:
@@ -214,6 +229,72 @@ def test_stream_retries_only_before_first_byte() -> None:
     with pytest.raises(ConnectionError, match="after first byte"):
         asyncio.run(collect_failure())
     assert calls == 1
+
+
+def test_clean_pre_byte_eof_is_bad_reply_and_retries() -> None:
+    calls = 0
+
+    async def clean_eof() -> AsyncIterator[bytes]:
+        if False:
+            yield b""
+
+    async def succeeds() -> AsyncIterator[bytes]:
+        yield b"ok"
+
+    async def empty_attempt() -> AsyncIterator[bytes]:
+        nonlocal calls
+        calls += 1
+        return await _stream(clean_eof())
+
+    async def successful_attempt() -> AsyncIterator[bytes]:
+        nonlocal calls
+        calls += 1
+        return await _stream(succeeds())
+
+    async def collect() -> list[bytes]:
+        return [chunk async for chunk in relay_stream((empty_attempt, successful_attempt))]
+
+    assert asyncio.run(collect()) == [b"ok"]
+    assert calls == 2
+
+
+def test_non_retryable_failure_is_not_retried() -> None:
+    calls = 0
+
+    async def fail() -> AsyncIterator[bytes]:
+        if False:
+            yield b""
+        raise ValueError("invalid upstream response")
+
+    async def failing_attempt() -> AsyncIterator[bytes]:
+        nonlocal calls
+        calls += 1
+        return await _stream(fail())
+
+    async def collect() -> None:
+        async for _ in relay_stream((failing_attempt, failing_attempt)):
+            pass
+
+    with pytest.raises(ValueError, match="invalid upstream response"):
+        asyncio.run(collect())
+    assert calls == 1
+
+
+def test_exhausted_empty_replies_retain_bad_reply_cause() -> None:
+    async def clean_eof() -> AsyncIterator[bytes]:
+        if False:
+            yield b""
+
+    async def attempt() -> AsyncIterator[bytes]:
+        return await _stream(clean_eof())
+
+    async def collect() -> None:
+        async for _ in relay_stream((attempt,)):
+            pass
+
+    with pytest.raises(UpstreamAttemptsExhausted) as raised:
+        asyncio.run(collect())
+    assert isinstance(raised.value.__cause__, BadUpstreamReply)
 
 
 def test_all_pre_byte_failures_raise_exhausted() -> None:
