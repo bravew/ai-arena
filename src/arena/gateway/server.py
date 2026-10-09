@@ -302,6 +302,21 @@ async def _protocol(request: Request) -> Response:
     permit: LanePermit | None = None
     reservation = None
     call: Call | None = None
+    stream_owns_lifecycle = False
+    metrics_recorded = False
+
+    def record_metrics(status_code: int) -> None:
+        nonlocal metrics_recorded
+        if metrics_recorded:
+            return
+        metrics_recorded = True
+        state.metrics.inc("gateway_requests", status=str(status_code))
+        state.metrics.observe(
+            "gateway_request_duration_ms",
+            (time.monotonic() - started) * 1000,
+            status=str(status_code),
+        )
+
     try:
         try:
             body = await read_body(request, state.max_body_bytes, state.max_encoded_bytes)
@@ -548,22 +563,31 @@ async def _protocol(request: Request) -> Response:
 
         async def response_stream() -> AsyncIterator[bytes]:
             sent = False
+            stream_status = upstream.status_code
             try:
                 async for chunk in upstream.body:
                     sent = sent or bool(chunk)
                     yield chunk
             except asyncio.CancelledError:
+                stream_status = 499
                 raise
             except Exception:
+                stream_status = 502
                 logger.warning("upstream stream failed after response began")
                 raise
             finally:
+                if not sent and stream_status == upstream.status_code:
+                    stream_status = 502
+                finalize_task = asyncio.create_task(finalize(stream_status, upstream.tokens))
                 try:
-                    await asyncio.shield(
-                        finalize(upstream.status_code if sent else 502, upstream.tokens)
-                    )
+                    await asyncio.shield(finalize_task)
+                except asyncio.CancelledError:
+                    await finalize_task
+                    raise
                 except Exception:
                     logger.exception("failed to finalize gateway call")
+                finally:
+                    record_metrics(stream_status)
 
         result_status = upstream.status_code
         response_headers = {
@@ -571,6 +595,7 @@ async def _protocol(request: Request) -> Response:
             for key, value in upstream.headers.items()
             if key.lower() not in {"connection", "transfer-encoding", "content-length"}
         }
+        stream_owns_lifecycle = True
         return StreamingResponse(
             response_stream(), status_code=result_status, headers=response_headers
         )
@@ -587,16 +612,14 @@ async def _protocol(request: Request) -> Response:
         logger.exception("gateway upstream request failed")
         return _error(result_status, "upstream_error", "upstream request failed")
     finally:
-        if permit is not None and lane is not None:
-            await asyncio.shield(lane.release())
-        if reservation is not None:
-            await asyncio.shield(reservation.release())
-        state.metrics.inc("gateway_requests", status=str(result_status))
-        state.metrics.observe(
-            "gateway_request_duration_ms",
-            (time.monotonic() - started) * 1000,
-            status=str(result_status),
-        )
+        if not stream_owns_lifecycle:
+            if permit is not None and lane is not None:
+                await asyncio.shield(lane.release())
+                permit = None
+            if reservation is not None:
+                await asyncio.shield(reservation.release())
+                reservation = None
+            record_metrics(result_status)
 
 
 def _request_protocol(request: Request) -> str:
