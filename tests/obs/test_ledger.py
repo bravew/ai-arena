@@ -73,7 +73,7 @@ def test_subscription_cost_is_unknown_and_budget_only_counts_api_spend(tmp_path:
         recorded = ledger.record(call)
         assert recorded.cost_usd is None
         budget = Budget()
-        budget.record_call(recorded)
+        asyncio.run(budget.record_call(recorded, EventLog(tmp_path / "events")))
         budget.record_compute_cost(1.25)
         report = budget.report()
         assert report.metered_spend_usd == 0
@@ -81,11 +81,30 @@ def test_subscription_cost_is_unknown_and_budget_only_counts_api_spend(tmp_path:
         assert report.compute_cost_usd == 1.25
 
 
+def test_budget_reserves_spend_for_concurrent_calls(tmp_path: Path) -> None:
+    async def run() -> None:
+        budget = Budget()
+        events = EventLog(tmp_path / "events")
+        accepted = await budget.check_call(
+            _call(call_id="c1").model_copy(update={"cost_usd": 12.0}), events
+        )
+        with pytest.raises(BudgetExceeded):
+            await budget.check_call(
+                _call(call_id="c2").model_copy(update={"cost_usd": 9.0}), events
+            )
+        assert budget.report().remaining_usd == 8.0
+        await accepted.settle(10.0)
+        assert budget.metered_spend_usd == 10.0
+        assert budget.report().remaining_usd == 10.0
+
+    asyncio.run(run())
+
+
 def test_budget_refuses_over_cap_call_and_emits_budget_event(tmp_path: Path) -> None:
     async def run() -> None:
         budget = Budget()
-        budget.record_call(_call().model_copy(update={"cost_usd": 19.99}))
         events = EventLog(tmp_path)
+        await budget.record_call(_call().model_copy(update={"cost_usd": 19.99}), events)
         with pytest.raises(BudgetExceeded):
             await budget.check_call(
                 _call().model_copy(update={"cost_usd": 0.02}), events=events

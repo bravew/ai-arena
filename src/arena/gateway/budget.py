@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from dataclasses import dataclass
 from datetime import UTC, datetime
 
@@ -24,25 +25,53 @@ class BudgetReport:
     compute_cost_usd: float
 
 
+class BudgetReservation:
+    """One call's reserved share of the cap."""
+
+    def __init__(self, budget: Budget, call: Call) -> None:
+        self.budget = budget
+        self.call = call
+        self._settled = False
+
+    async def settle(self, final_cost_usd: float | None = None) -> None:
+        if self._settled:
+            raise RuntimeError("budget reservation is already settled")
+        await self.budget.settle(self, final_cost_usd, billable=True)
+        self._settled = True
+
+    async def release(self) -> None:
+        if self._settled:
+            raise RuntimeError("budget reservation is already settled")
+        await self.budget.settle(self, None, billable=False)
+        self._settled = True
+
+
 class Budget:
-    """Track API spend against a hard cap, reporting subscription and compute separately."""
+    """Track and reserve API spend against a hard cap, reporting other costs separately."""
 
     def __init__(self, cap_usd: float = DEFAULT_BUDGET_USD) -> None:
         if not 0 < cap_usd <= DEFAULT_BUDGET_USD:
             raise ValueError(f"budget cap must be between $0 and ${DEFAULT_BUDGET_USD:.2f}")
         self.cap_usd = cap_usd
         self._metered_spend = 0.0
+        self._reserved: dict[str, tuple[float, Call]] = {}
         self._subscription_tokens = 0
         self._compute_cost = 0.0
+        self._lock = asyncio.Lock()
 
     @property
     def metered_spend_usd(self) -> float:
         return self._metered_spend
 
-    async def check_call(self, call: Call, events: EventLog | None = None) -> None:
-        proposed_spend = self._metered_spend + (call.cost_usd or 0.0)
-        if proposed_spend > self.cap_usd:
-            if events is not None:
+    async def check_call(self, call: Call, events: EventLog) -> BudgetReservation:
+        """Atomically reserve a call's estimated cost before dispatching it upstream."""
+        amount = call.cost_usd or 0.0
+        async with self._lock:
+            proposed_spend = self._metered_spend + sum(
+                reserved_amount for reserved_amount, _ in self._reserved.values()
+            ) + amount
+            if proposed_spend > self.cap_usd:
+                spent = self._metered_spend
                 await events.append(
                     RunEvent(
                         seq=0,
@@ -52,28 +81,70 @@ class Budget:
                         ref=call.id,
                         data={
                             "cap_usd": self.cap_usd,
-                            "spent_usd": self._metered_spend,
-                            "requested_usd": call.cost_usd or 0.0,
+                            "spent_usd": spent,
+                            "reserved_usd": sum(
+                                reserved_amount
+                                for reserved_amount, _ in self._reserved.values()
+                            ),
+                            "requested_usd": amount,
                             "subscription_tokens": self._subscription_tokens,
                             "compute_cost_usd": self._compute_cost,
                         },
                     )
                 )
-            raise BudgetExceeded(
-                f"call would exceed the ${self.cap_usd:.2f} metered API budget "
-                f"(${self._metered_spend:.6f} spent, ${call.cost_usd or 0.0:.6f} requested)"
-            )
+                raise BudgetExceeded(
+                    f"call would exceed the ${self.cap_usd:.2f} metered API budget "
+                    f"(${spent:.6f} spent, ${amount:.6f} requested)"
+                )
+            if call.id in self._reserved:
+                raise ValueError(f"call already has a budget reservation: {call.id}")
+            self._reserved[call.id] = (amount, call)
+        return BudgetReservation(self, call)
 
-    def record_call(self, call: Call) -> None:
-        if self._metered_spend + (call.cost_usd or 0.0) > self.cap_usd:
-            raise BudgetExceeded("call exceeds the metered API budget; check_call must run first")
-        if call.cost_usd is None:
-            self._subscription_tokens += sum(
-                (call.tokens.in_, call.tokens.out, call.tokens.reasoning,
-                 call.tokens.cache_read, call.tokens.cache_write)
-            )
-        else:
-            self._metered_spend += call.cost_usd
+    async def settle(
+        self,
+        reservation: BudgetReservation,
+        final_cost_usd: float | None,
+        *,
+        billable: bool,
+    ) -> None:
+        call = reservation.call
+        if final_cost_usd is not None and final_cost_usd < 0:
+            raise ValueError("final cost must be non-negative")
+        async with self._lock:
+            if call.id not in self._reserved:
+                raise ValueError(f"budget reservation not found for call: {call.id}")
+            reserved_amount, reserved_call = self._reserved[call.id]
+            if not billable:
+                del self._reserved[call.id]
+                return
+            if reserved_call.cost_usd is None:
+                del self._reserved[call.id]
+                self._subscription_tokens += sum(
+                    (
+                        reserved_call.tokens.in_,
+                        reserved_call.tokens.out,
+                        reserved_call.tokens.reasoning,
+                        reserved_call.tokens.cache_read,
+                        reserved_call.tokens.cache_write,
+                    )
+                )
+                return
+            if final_cost_usd is None:
+                del self._reserved[call.id]
+                return
+            if final_cost_usd > reserved_amount:
+                raise BudgetExceeded(
+                    f"actual charge ${final_cost_usd:.6f} exceeded "
+                    f"reserved amount ${reserved_amount:.6f}"
+                )
+            del self._reserved[call.id]
+            self._metered_spend += final_cost_usd
+
+    async def record_call(self, call: Call, events: EventLog) -> None:
+        """Reserve and settle immediately for callers without a separate dispatch phase."""
+        reservation = await self.check_call(call, events)
+        await reservation.settle(call.cost_usd)
 
     def record_compute_cost(self, cost_usd: float) -> None:
         if cost_usd < 0:
@@ -84,7 +155,12 @@ class Budget:
         return BudgetReport(
             cap_usd=self.cap_usd,
             metered_spend_usd=self._metered_spend,
-            remaining_usd=max(0.0, self.cap_usd - self._metered_spend),
+            remaining_usd=max(
+                0.0,
+                self.cap_usd
+                - self._metered_spend
+                - sum(amount for amount, _ in self._reserved.values()),
+            ),
             subscription_tokens=self._subscription_tokens,
             compute_cost_usd=self._compute_cost,
         )

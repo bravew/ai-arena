@@ -4,10 +4,13 @@ from __future__ import annotations
 
 import asyncio
 import json
+import re
 from pathlib import Path
 
 from arena.core.bundle_contract import validate_event
 from arena.core.models import RunEvent
+
+_RUN_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,127}")
 
 
 class EventLog:
@@ -20,6 +23,7 @@ class EventLog:
         self._locks: dict[str, asyncio.Lock] = {}
 
     async def append(self, event: RunEvent) -> RunEvent:
+        self._validate_run_id(event.run_id)
         lock = self._locks.setdefault(event.run_id, asyncio.Lock())
         async with lock:
             events = self._events.get(event.run_id)
@@ -30,9 +34,8 @@ class EventLog:
             payload = assigned.model_dump(mode="json")
             payload["event_version"] = 1
             validate_event(payload)
-            run_dir = self.root / event.run_id
-            run_dir.mkdir(parents=True, exist_ok=True)
-            path = run_dir / "events.jsonl"
+            path = self._events_path(event.run_id)
+            path.parent.mkdir(parents=True, exist_ok=True)
             with path.open("a", encoding="utf-8") as stream:
                 stream.write(json.dumps(payload, separators=(",", ":")) + "\n")
                 stream.flush()
@@ -43,6 +46,7 @@ class EventLog:
             return assigned
 
     async def read_after(self, run_id: str, after: int, wait: float = 0) -> list[RunEvent]:
+        self._validate_run_id(run_id)
         if after < 0:
             raise ValueError("after must be non-negative")
         if not 0 <= wait <= 25:
@@ -67,8 +71,21 @@ class EventLog:
             return []
         return [event for event in self._events[run_id] if event.seq > after]
 
+    @staticmethod
+    def _validate_run_id(run_id: str) -> None:
+        if not _RUN_ID.fullmatch(run_id) or run_id in {".", ".."}:
+            raise ValueError(f"invalid run id: {run_id!r}")
+
+    def _events_path(self, run_id: str) -> Path:
+        self._validate_run_id(run_id)
+        root = self.root.resolve()
+        path = root / run_id / "events.jsonl"
+        if root not in path.resolve().parents:
+            raise ValueError(f"event path escapes log root for run id: {run_id!r}")
+        return path
+
     def _load(self, run_id: str) -> list[RunEvent]:
-        path = self.root / run_id / "events.jsonl"
+        path = self._events_path(run_id)
         if not path.exists():
             return []
         events: list[RunEvent] = []

@@ -5,6 +5,8 @@ import json
 from datetime import UTC, datetime
 from pathlib import Path
 
+import pytest
+
 from arena.core.models import RunEvent, RunEventKind
 from arena.obs.events import EventLog
 
@@ -27,6 +29,19 @@ def test_event_log_assigns_monotonic_seq_appends_jsonl_and_long_polls(tmp_path: 
         assert second.seq == 2
         assert await waiting == [second]
         assert await log.read_after("r1", after=0, wait=0) == [first, second]
+
+    asyncio.run(run())
+
+
+def test_event_log_rejects_run_ids_that_escape_the_root(tmp_path: Path) -> None:
+    async def run() -> None:
+        log = EventLog(tmp_path)
+        for run_id in ("../outside", "/tmp/outside", ".."):
+            with pytest.raises(ValueError, match="invalid run id"):
+                await log.append(_event(run_id))
+            with pytest.raises(ValueError, match="invalid run id"):
+                await log.read_after(run_id, after=0)
+        assert not (tmp_path.parent / "outside" / "events.jsonl").exists()
 
     asyncio.run(run())
 
