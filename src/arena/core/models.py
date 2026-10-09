@@ -5,8 +5,9 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Annotated, Any, Literal, get_args
 
-from pydantic import BaseModel, ConfigDict, Field, computed_field
+from pydantic import BaseModel, ConfigDict, Field, computed_field, field_validator
 
+from arena.core.frozen import frozen_mapping
 from arena.core.ids import content_id
 from arena.core.modelref import ModelRef
 
@@ -56,6 +57,11 @@ class Scaffold(Frozen):
     version: str
     settings: dict[str, Any] = {}
 
+    @field_validator("settings")
+    @classmethod
+    def _freeze_settings(cls, value: dict[str, Any]) -> dict[str, Any]:
+        return frozen_mapping(value)
+
 
 ScaffoldPrompt = Literal["native", "pinned"]
 
@@ -71,7 +77,12 @@ class Contestant(Frozen):
     kit_hash: str = NO_KIT
     orchestration: str = "single"
     prompt_version: str | None = None
-    hooks: list[str] = []
+    hooks: tuple[str, ...] = ()
+
+    @field_validator("params")
+    @classmethod
+    def _freeze_params(cls, value: dict[str, Any]) -> dict[str, Any]:
+        return frozen_mapping(value)
 
     def resolved_config(self) -> dict[str, Any]:
         config = self.model_dump(mode="json", exclude={"label", "id"})
@@ -193,7 +204,9 @@ class Tokens(Frozen):
     cache_read: int = 0
     cache_write: int = 0
 
-    model_config = ConfigDict(frozen=True, extra="forbid", populate_by_name=True)
+    model_config = ConfigDict(
+        frozen=True, extra="forbid", populate_by_name=True, serialize_by_alias=True
+    )
 
 
 class Try(Frozen):

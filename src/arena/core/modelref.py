@@ -19,7 +19,9 @@ class ModelRef(BaseModel):
 
     @model_validator(mode="after")
     def _non_empty(self) -> ModelRef:
-        if not self.provider or "/" in self.provider or not self.model:
+        blank = not self.provider.strip() or not self.model.strip()
+        padded = self.provider != self.provider.strip() or self.model != self.model.strip()
+        if blank or padded or "/" in self.provider:
             raise ValueError(f"not a provider/model reference: {self!s}")
         return self
 
