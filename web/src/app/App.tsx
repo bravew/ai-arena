@@ -5,6 +5,7 @@ import { schemaExample } from '../lib/schema/fixture';
 import { validateBundle } from '../lib/schema';
 import { AppLayout } from './routes';
 import { HomePage, PlaceholderPage } from './pages';
+import { OpsView } from '../views/ops/OpsView';
 import { BundleContext } from './state';
 
 const router = createBrowserRouter([
@@ -22,7 +23,7 @@ const router = createBrowserRouter([
       { path: 'sessions', element: <PlaceholderPage title="Sessions" /> },
       { path: 'kit-effect', element: <PlaceholderPage title="Kit effect" /> },
       { path: 'live', element: <PlaceholderPage title="Live run" /> },
-      { path: 'ops', element: <PlaceholderPage title="Operations" /> },
+      { path: 'ops', element: <OpsView /> },
       { path: '*', element: <PlaceholderPage title="Page not found" /> },
     ],
   },
