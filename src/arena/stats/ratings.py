@@ -38,9 +38,23 @@ class Ratings:
     judge: JudgeKind
     connected_components: tuple[tuple[str, ...], ...]
 
-    def leaderboard(self) -> tuple[Rating, ...]:
-        """Sort by strength, breaking exact ties by contestant id."""
-        return tuple(sorted(self.entries, key=lambda row: (-row.strength, row.contestant_id)))
+    def leaderboard(self) -> tuple[tuple[Rating, ...], ...]:
+        """Return separate strength-sorted leaderboards for each component."""
+        return tuple(
+            tuple(
+                sorted(
+                    (row for row in self.entries if row.component == component_index),
+                    key=lambda row: (-row.strength, row.contestant_id),
+                )
+            )
+            for component_index in range(len(self.connected_components))
+        )
+
+    def global_leaderboard(self) -> tuple[Rating, ...]:
+        """Return one ranking only when every contestant is comparison-connected."""
+        if len(self.connected_components) != 1:
+            raise ValueError("cannot rank contestants across disconnected comparison components")
+        return self.leaderboard()[0]
 
 
 def bradley_terry(

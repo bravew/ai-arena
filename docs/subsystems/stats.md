@@ -22,7 +22,7 @@
 6. The bootstrap draws tasks with replacement, then repeats within each selected task with replacement. Percentile endpoints form the confidence interval. A fixed default seed makes repeat reports reproducible.
 7. `Aggregation.compare` intersects eligible tasks and attempt numbers, bootstraps paired score differences, and classifies each shared task as a win, tie, or loss. If there are no shared tasks/repeats, it raises `ValueError`.
 8. `PairwiseJudgment` validates input and labels it as model-judge or human. `judgments_for` and `bradley_terry` filter by exactly one source, keeping the resulting leaderboards separate.
-9. `bradley_terry` builds comparison connected components, fits each independently with a symmetric half-win pseudo-count per directed pair, and bootstraps outcomes with a seeded PRNG. Each component has its own geometric-mean-one scale; strengths across components are not comparable. Bootstrap intervals use linear interpolation between order statistics.
+9. `bradley_terry` builds comparison connected components, fits each independently with a symmetric half-win pseudo-count per directed pair, and bootstraps outcomes with a seeded PRNG. Each component has its own geometric-mean-one scale. `Ratings.leaderboard` returns separate rankings per component, and `global_leaderboard` raises when the graph is disconnected. Bootstrap intervals use linear interpolation between order statistics.
 10. `pareto_frontier` maximizes quality while minimizing the chosen resource. Auto mode uses tokens/task whenever any contestant is subscription-backed or has unknown dollar cost; cost labels for subscription-backed trials remain `flat`. Exact coordinate ties remain on the frontier.
 
 ## Constraints and failure behavior

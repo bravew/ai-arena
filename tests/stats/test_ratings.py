@@ -19,8 +19,8 @@ def test_pairwise_keeps_model_and_human_leaderboards_separate() -> None:
         _judgment("a", "b", "right", "human"),
     ]
     assert len(judgments_for(rows, "model")) == 1
-    assert bradley_terry(rows, judge="model", samples=20).leaderboard()[0].contestant_id == "a"
-    assert bradley_terry(rows, judge="human", samples=20).leaderboard()[0].contestant_id == "b"
+    assert bradley_terry(rows, judge="model", samples=20).leaderboard()[0][0].contestant_id == "a"
+    assert bradley_terry(rows, judge="human", samples=20).leaderboard()[0][0].contestant_id == "b"
 
 
 def test_pairwise_rejects_invalid_ids_and_self_comparisons() -> None:
@@ -66,7 +66,7 @@ def test_bradley_terry_recovers_planted_ordering_from_2k_comparisons() -> None:
     result = bradley_terry(rows, samples=40, seed=12)
 
     assert len(rows) == 2_000
-    assert [row.contestant_id for row in result.leaderboard()] == [
+    assert [row.contestant_id for row in result.global_leaderboard()] == [
         "top",
         "upper",
         "lower",
@@ -86,6 +86,13 @@ def test_disconnected_graph_is_reported_as_separate_components() -> None:
     result = bradley_terry([_judgment("a", "b", "left"), _judgment("x", "y", "right")], samples=20)
     assert result.connected_components == (("a", "b"), ("x", "y"))
     assert {row.component for row in result.entries} == {0, 1}
+    grouped = result.leaderboard()
+    assert tuple(tuple(row.contestant_id for row in group) for group in grouped) == (
+        ("a", "b"),
+        ("y", "x"),
+    )
+    with pytest.raises(ValueError, match="disconnected comparison components"):
+        result.global_leaderboard()
 
 
 def test_reproducibility_and_invalid_bootstrap_inputs() -> None:
