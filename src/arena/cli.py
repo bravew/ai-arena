@@ -8,8 +8,8 @@ import typer
 import yaml
 
 from arena import __version__
-from arena.cli_selfcheck import selfcheck
 from arena.cli_score import create_score_command
+from arena.cli_selfcheck import selfcheck
 from arena.core.config import validate_document
 from arena.providers.config import parse_yaml, reject_plaintext_secrets
 from arena.scorers.registry import default_registry
@@ -73,6 +73,8 @@ def selfcheck_command(
 ) -> None:
     """Run trusted task scorer commands with host privileges against oracle and null."""
     selfcheck(paths, trust_task_code=trust_task_code)
+
+
 app.command("score")(create_score_command(default_registry()))
 
 

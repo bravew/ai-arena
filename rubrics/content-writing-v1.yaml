@@ -1,6 +1,20 @@
 id: content-writing
 version: 1
 kind: content
+scale: 0-2
+criteria:
+  - id: accuracy
+    weight: 3
+    desc: Preserves the supplied facts and marks uncertainty.
+  - id: task_fulfillment
+    weight: 3
+    desc: Delivers the requested format, sections and audience needs.
+  - id: clarity_and_style
+    weight: 2
+    desc: Clear, concise, well structured and suited to the audience.
+  - id: usefulness
+    weight: 2
+    desc: Gives concrete, relevant information and a suitable next step.
 anchors:
   accuracy:
     0: Invents or contradicts important facts.

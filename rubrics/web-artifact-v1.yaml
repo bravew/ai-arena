@@ -1,6 +1,23 @@
 id: web-artifact
 version: 1
 kind: web-artifact
+scale: 0-2
+criteria:
+  - id: brief_fulfillment
+    weight: 3
+    desc: Implements the requested experience and its essential requirements.
+  - id: usability
+    weight: 2
+    desc: Clear hierarchy and interaction states on the main path.
+  - id: accessibility
+    weight: 2
+    desc: Semantic structure, labels, contrast and keyboard use.
+  - id: responsive_quality
+    weight: 2
+    desc: Readable and usable across narrow and wide viewports.
+  - id: craft
+    weight: 1
+    desc: Deliberate visual hierarchy and finished details.
 anchors:
   brief_fulfillment:
     0: The artifact does not implement the requested experience.
