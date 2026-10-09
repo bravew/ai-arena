@@ -67,9 +67,11 @@ class Budget:
         """Atomically reserve a call's estimated cost before dispatching it upstream."""
         amount = call.cost_usd or 0.0
         async with self._lock:
-            proposed_spend = self._metered_spend + sum(
-                reserved_amount for reserved_amount, _ in self._reserved.values()
-            ) + amount
+            proposed_spend = (
+                self._metered_spend
+                + sum(reserved_amount for reserved_amount, _ in self._reserved.values())
+                + amount
+            )
             if proposed_spend > self.cap_usd:
                 spent = self._metered_spend
                 await events.append(
@@ -83,8 +85,7 @@ class Budget:
                             "cap_usd": self.cap_usd,
                             "spent_usd": spent,
                             "reserved_usd": sum(
-                                reserved_amount
-                                for reserved_amount, _ in self._reserved.values()
+                                reserved_amount for reserved_amount, _ in self._reserved.values()
                             ),
                             "requested_usd": amount,
                             "subscription_tokens": self._subscription_tokens,

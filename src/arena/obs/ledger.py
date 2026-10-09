@@ -40,8 +40,7 @@ class CallsLedger:
             if call.tokens.reasoning and "reasoning" in prices:
                 token_counts["reasoning"] = call.tokens.reasoning
             cost = (
-                sum(token_counts.get(kind, 0) * price for kind, price in prices.items())
-                / 1_000_000
+                sum(token_counts.get(kind, 0) * price for kind, price in prices.items()) / 1_000_000
             )
             priced = call.model_copy(
                 update={"cost_usd": cost, "price_version": self._catalog.price_version}

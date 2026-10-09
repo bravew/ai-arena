@@ -60,9 +60,7 @@ def test_ledger_persists_full_call_and_prices_tokens(tmp_path: Path) -> None:
 
 
 def test_subscription_cost_is_unknown_and_budget_only_counts_api_spend(tmp_path: Path) -> None:
-    call = _call().model_copy(
-        update={"id": "c2", "model_asked": "anthropic/claude-opus-5-5-sub"}
-    )
+    call = _call().model_copy(update={"id": "c2", "model_asked": "anthropic/claude-opus-5-5-sub"})
     with Store(tmp_path / "arena.db") as store:
         store.execute("INSERT INTO runs(id, config_json, status) VALUES ('r1', '{}', 'running')")
         store.execute(
@@ -106,9 +104,7 @@ def test_budget_refuses_over_cap_call_and_emits_budget_event(tmp_path: Path) -> 
         events = EventLog(tmp_path)
         await budget.record_call(_call().model_copy(update={"cost_usd": 19.99}), events)
         with pytest.raises(BudgetExceeded):
-            await budget.check_call(
-                _call().model_copy(update={"cost_usd": 0.02}), events=events
-            )
+            await budget.check_call(_call().model_copy(update={"cost_usd": 0.02}), events=events)
         emitted = await events.read_after("r1", after=0)
         assert len(emitted) == 1
         assert emitted[0].kind == "budget"
