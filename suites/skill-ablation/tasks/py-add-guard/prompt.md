@@ -1,0 +1,1 @@
+Implement `safe_ratio(numerator, denominator)` in `solution.py`. Return the quotient when the denominator is nonzero and `None` when it is zero (including `0.0` and `-0.0`). Otherwise keep Python's normal division behavior for numbers, including `fractions.Fraction` and `decimal.Decimal` inputs.

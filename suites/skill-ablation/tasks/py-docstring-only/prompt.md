@@ -1,0 +1,1 @@
+The `clamp(value, lower, upper)` function in `solution.py` has a one-line docstring that says too little. Rewrite the docstring so it states that both bounds are inclusive, that `lower` must not be greater than `upper` (and what happens when it is), and what the function returns. Leave the implementation as it is.

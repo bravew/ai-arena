@@ -1,0 +1,22 @@
+# Product axis: each vendor's own CLI with its own model, the "what should we use" comparison.
+# Three vendor CLIs paired only with their own provider's model = 3 contestants.
+matrix:
+  model:
+    - anthropic/claude-opus-5-5:high
+    - openai/gpt-x:medium
+    - google/gemini-3-pro:high
+  scaffold:
+    - { id: claude-code, version: 2.4.1 }
+    - { id: codex-cli, version: 0.70.0 }
+    - { id: gemini-cli, version: 1.1.0 }
+exclude:
+  - { model: anthropic/claude-opus-5-5:high, scaffold: { id: codex-cli, version: 0.70.0 } }
+  - { model: anthropic/claude-opus-5-5:high, scaffold: { id: gemini-cli, version: 1.1.0 } }
+  - { model: openai/gpt-x:medium, scaffold: { id: claude-code, version: 2.4.1 } }
+  - { model: openai/gpt-x:medium, scaffold: { id: gemini-cli, version: 1.1.0 } }
+  - { model: google/gemini-3-pro:high, scaffold: { id: claude-code, version: 2.4.1 } }
+  - { model: google/gemini-3-pro:high, scaffold: { id: codex-cli, version: 0.70.0 } }
+kit: kits/team-coding@3
+kits:
+  kits/team-coding@3: 3fdba3df7b2d418c634438d9cd39d94885709c6c6638ca170b060c21c7ad3035
+orchestration: single
