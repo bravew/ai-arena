@@ -16,19 +16,22 @@ from arena.core.bundle import (
 )
 from arena.core.bundle_contract import validate_bundle, validate_events_jsonl
 from arena.core.cas import ArtifactStore
+from arena.core.modelref import ModelRef
 from arena.core.models import Call, Contestant, Scaffold, Tokens
 from arena.core.store import Store
 from arena.stats.pairwise import PairwiseJudgment
 
 PRICE_VERSION = "2026-10-01"
 TASKS = ("t1", "t2")
-BASE = Contestant(
-    label="opencode",
-    model="mock/echo",  # type: ignore[arg-type]
-    scaffold=Scaffold(id="opencode", version="1.2.0"),
+SCAFFOLD = Scaffold(id="opencode", version="1.2.0")
+BASE = Contestant(label="opencode", model=ModelRef.parse("mock/echo"), scaffold=SCAFFOLD)
+KIT = Contestant(
+    label="opencode+kit",
+    model=ModelRef.parse("mock/echo"),
+    scaffold=SCAFFOLD,
+    kit_hash="kit-v1",
 )
-KIT = BASE.model_copy(update={"label": "opencode+kit", "kit_hash": "kit-v1"})
-DIRECT = Contestant(label="direct", model="mock/other")  # type: ignore[arg-type]
+DIRECT = Contestant(label="direct", model=ModelRef.parse("mock/other"))
 CONTESTANTS = (BASE, KIT, DIRECT)
 SCORES = {BASE.id: (0.4, 0.6), KIT.id: (0.8, 0.8), DIRECT.id: (0.2, 0.2)}
 # (contestant, task, attempt) -> flag planted with a score that would change the mean
