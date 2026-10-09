@@ -108,17 +108,17 @@ def test_partial_session_telemetry_does_not_claim_skills_were_not_used() -> None
     ]
     sessions = [
         SkillSession("k-observed", "s1", {"skill-a": frozenset({"listed"})}),
+        SkillSession(
+            "k-observed", "s1-partial", {"skill-a": frozenset({"invoked"})}, complete=False
+        ),
         SkillSession("k-unobserved", "s2", {}, complete=False),
     ]
 
     result = compute_kit_effect(trials, sessions)
 
     assert result.status == "incomplete_telemetry"
-    assert result.uptake["skill-a"].sessions == 1
-    split = result.observational["skill-a"]
-    assert split.not_invoked is not None
-    assert split.not_invoked.estimate == pytest.approx(0.5)
-    assert split.invoked is None
+    assert "skill-a" not in result.uptake
+    assert "skill-a" not in result.observational
 
 
 def test_invoked_not_invoked_scores_are_observational_and_task_clustered() -> None:

@@ -191,11 +191,14 @@ def compute_kit_effect(
     _validate_sessions(session_rows, seen_trials)
     kit_trial_ids = {record.trial_id for record in by_arm["kit"].values()}
     kit_sessions = [session for session in session_rows if session.trial_id in kit_trial_ids]
-    complete_sessions = [session for session in kit_sessions if session.complete]
-    uptake = _compute_uptake(complete_sessions)
-    observational = _compute_observational(
-        complete_sessions, by_arm["kit"], bootstrap_samples, seed
-    )
+    incomplete_trial_ids = {session.trial_id for session in kit_sessions if not session.complete}
+    usable_sessions = [
+        session
+        for session in kit_sessions
+        if session.complete and session.trial_id not in incomplete_trial_ids
+    ]
+    uptake = _compute_uptake(usable_sessions)
+    observational = _compute_observational(usable_sessions, by_arm["kit"], bootstrap_samples, seed)
     cost_values = [
         kit.cost_usd - baseline.cost_usd
         for kit, baseline in pair_records
@@ -204,7 +207,7 @@ def compute_kit_effect(
     cost_delta = math.fsum(cost_values) / len(cost_values) if cost_values else None
     any_invocation = any(data.invoked > 0 for data in uptake.values())
     observed_kit_trial_ids = {session.trial_id for session in kit_sessions}
-    partial_telemetry = any(not session.complete for session in kit_sessions)
+    partial_telemetry = bool(incomplete_trial_ids)
     missing_telemetry = any(
         not (record.swapped or record.unmetered or record.kit_unapplied)
         and record.trial_id not in observed_kit_trial_ids
