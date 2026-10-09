@@ -1,0 +1,5 @@
+id_label: mock-a
+model: mock/echo
+params: { temperature: 0 }
+scaffold: none
+orchestration: single

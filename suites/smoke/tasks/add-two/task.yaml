@@ -1,0 +1,6 @@
+id: smoke.add-two
+version: 1
+kind: codegen
+prompt_file: prompt.md
+scorers:
+  - { id: execution, weight: 1.0, command: "python -m pytest -q tests" }

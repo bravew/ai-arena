@@ -1,0 +1,9 @@
+id: fixture-basic
+version: 1
+instructions: instructions.md
+skills:
+  - path: skills/smoke-greeting
+mcp:
+  - name: fixture-docs
+    url: https://mcp.invalid/docs
+    headers: { Authorization: "${FIXTURE_MCP_TOKEN}" }

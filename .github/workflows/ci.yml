@@ -1,0 +1,25 @@
+name: CI
+
+on:
+  pull_request:
+    branches: [main, "epic/**"]
+  push:
+    branches: [main, "epic/**"]
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: false  # a cancelled run is not a pass; let each head finish
+
+jobs:
+  python:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+      - run: uv sync --locked
+      - run: uv run ruff check
+      - run: uv run ruff format --check
+      - run: uv run pyright
+      - run: uv run pytest

@@ -1,0 +1,7 @@
+{"event_version":1,"seq":1,"ts":"2026-10-08T10:00:00Z","run_id":"run-schema-001","kind":"run_started","ref":null,"data":{"suite_id":"smoke"}}
+{"event_version":1,"seq":2,"ts":"2026-10-08T10:00:01Z","run_id":"run-schema-001","kind":"trial_queued","ref":"trial-kit","data":{"contestant_id":"c-ablation-kit"}}
+{"event_version":1,"seq":3,"ts":"2026-10-08T10:00:02Z","run_id":"run-schema-001","kind":"kit_installed","ref":"trial-kit","data":{"trial_id":"trial-kit","kit_hash":"sha256:kit-v3","written":[{"path":".config/opencode/AGENTS.md","sha256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}],"refused":[]}}
+{"event_version":1,"seq":4,"ts":"2026-10-08T10:00:03Z","run_id":"run-schema-001","kind":"session_turn","ref":"session-kit","data":{"session_id":"session-kit","trial_id":"trial-kit","turn_index":1,"turn":{"call_ids":[],"tool_calls":[],"skill_events":[],"mcp_calls":[],"files":[],"unmetered":false}}}
+{"event_version":1,"seq":5,"ts":"2026-10-08T10:00:04Z","run_id":"run-schema-001","kind":"skill_event","ref":"session-kit","data":{"session_id":"session-kit","trial_id":"trial-kit","skill_event":{"kind":"invoked","skill":"house-style","kit_hash":"sha256:kit-v3"}}}
+{"event_version":1,"seq":6,"ts":"2026-10-08T10:00:05Z","run_id":"run-schema-001","kind":"trial_finished","ref":"trial-kit","data":{"status":"succeeded"}}
+{"event_version":1,"seq":7,"ts":"2026-10-08T10:01:00Z","run_id":"run-schema-001","kind":"run_finished","ref":null,"data":{"status":"succeeded"}}

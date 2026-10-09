@@ -1,38 +1,32 @@
-# Providers and model catalog
-
-This reference follows the subsystem design in the development plan. Implementation modules and tests are planned but are not present in the sparse CP7 launch tree; source links point to existing plan headings until implementation lands.
+# Providers and catalog
 
 ## Responsibilities and sources of truth
 
-| Part | Responsibility | Source of truth |
-|---|---|---|
-| Provider configuration and model catalog | Load provider endpoints and environment-variable references without storing secrets; resolve provider keys and model metadata, effort levels, and prices. | [Development plan](../DEV_PLAN.md#5-providers-models-and-the-gateway) |
-| Delivery | Defines implementation stages and acceptance behavior. | [Checkpoint plan](../DEV_PLAN.md#13-delivery-plan-checkpoints) |
-| Engineering rules | Defines reference-page structure and link conventions. | [Engineering conventions](../DEV_PLAN.md#12-engineering-conventions) |
+| Part | Responsibility | Source |
+| --- | --- | --- |
+| Provider configuration | Load provider endpoints, environment key references, subscription declarations, and enabled state; reject literal credential values | [`arena.providers.config`](../../src/arena/providers/config.py) |
+| Model catalog | Validate model refs and require explicit token pricing or subscription pricing; subscription price remains unknown; distinguish disabled providers during model resolution | [`arena.catalog.config`](../../src/arena/catalog/config.py) |
+| Config validation CLI | Walk supplied files and directories, report all source paths, and exit non-zero for invalid configuration | [`validate`](../../src/arena/cli.py) |
 
 ## Runtime path
 
-1. Startup loads provider configuration and model catalog data.
-2. Provider selection resolves a configured endpoint and key reference.
-3. Calls use the catalog’s model metadata and price version for validation and accounting.
+1. `arena validate` expands directory arguments to YAML files.
+2. `resolve_model` parses the `ModelRef`, checks that its provider exists and is enabled, and only then looks up the model in the catalog.
+2. `parse_yaml` loads each document using PyYAML's safe loader and rejects empty files.
+3. Provider files are validated as `ProviderConfig`; model catalog files are validated as `ModelCatalog`.
+4. Validation issues include the filename and model path and are printed together before the command exits non-zero.
 
 ## Constraints and failure behavior
 
-Secrets stay in environment references, never committed configuration. Unknown models, unresolved keys, or invalid configuration are explicit errors. Pricing is versioned so recorded cost remains reproducible.
-
-- This branch does not yet contain the subsystem implementation or its tests. Future source paths are described in the plan and are not linked as existing files.
-- Keep source links on stable headings or symbols; do not use line-number links.
+- Provider API credentials use an environment variable name or `${ENV}` reference. Secret-named fields such as `Authorization` also accept only those references.
+- A provider must define keys, a subscription, or a built-in `mock`/`cassette` kind. Key and subscription authentication cannot be mixed.
+- A disabled provider remains in the configuration. `resolve_model` checks its enabled state before catalog membership, so a requested model reports `provider off` before `unknown model`.
+- A catalog model declares either `price_per_mtok` or `pricing: subscription`. Subscription pricing has `price_per_mtok = None`, never zero.
+- Missing, unreadable, malformed, empty, and invalid files are errors. Validation continues to report errors from other supplied files.
 
 ## Verification
 
-Run the planned subsystem check from the repository root:
-
 ```sh
-uv run pytest tests/providers tests/catalog
-```
-
-Check all subsystem reference links with:
-
-```sh
-uv run python scripts/check_doc_links.py
+uv run pytest tests/core/test_config.py
+uv run arena validate providers.yaml catalog/
 ```

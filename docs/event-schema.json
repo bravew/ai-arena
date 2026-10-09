@@ -1,0 +1,59 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://ai-arena.dev/schemas/event-schema.json",
+  "title": "AI Arena Run Event",
+  "type": "object",
+  "required": ["event_version", "seq", "ts", "run_id", "kind"],
+  "properties": {
+    "event_version": {"const": 1},
+    "seq": {"type": "integer", "minimum": 1},
+    "ts": {"type": "string", "format": "date-time"},
+    "run_id": {"type": "string", "minLength": 1},
+    "kind": {"enum": ["run_started", "trial_queued", "trial_started", "kit_installed", "call_queued", "call_try", "call_finished", "session_turn", "skill_event", "lane_changed", "trial_finished", "score_added", "budget", "run_finished"]},
+    "ref": {"type": ["string", "null"]},
+    "data": {"type": "object"}
+  },
+  "allOf": [
+    {"if": {"properties": {"kind": {"const": "kit_installed"}}, "required": ["kind"]}, "then": {"properties": {"data": {"$ref": "#/$defs/kitInstall"}}, "required": ["data"]}},
+    {"if": {"properties": {"kind": {"const": "session_turn"}}, "required": ["kind"]}, "then": {"properties": {"data": {"$ref": "#/$defs/sessionTurn"}}, "required": ["data"]}},
+    {"if": {"properties": {"kind": {"const": "skill_event"}}, "required": ["kind"]}, "then": {"properties": {"data": {"$ref": "#/$defs/skillEventData"}}, "required": ["data"]}}
+  ],
+  "additionalProperties": false,
+  "$defs": {
+    "kitInstall": {
+      "type": "object",
+      "required": ["trial_id", "kit_hash", "written", "refused"],
+      "properties": {
+        "trial_id": {"type": "string"},
+        "kit_hash": {"type": "string"},
+        "written": {"type": "array", "items": {"type": "object", "required": ["path", "sha256"], "properties": {"path": {"type": "string"}, "sha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"}}, "additionalProperties": false}},
+        "refused": {"type": "array", "items": {"type": "object", "required": ["item", "reason"], "properties": {"item": {"type": "string"}, "reason": {"type": "string"}}, "additionalProperties": false}}
+      },
+      "additionalProperties": false
+    },
+    "sessionTurn": {
+      "type": "object",
+      "required": ["session_id", "trial_id", "turn_index", "turn"],
+      "properties": {"session_id": {"type": "string"}, "trial_id": {"type": "string"}, "turn_index": {"type": "integer", "minimum": 1}, "turn": {"$ref": "#/$defs/turn"}},
+      "additionalProperties": false
+    },
+    "turn": {
+      "type": "object",
+      "required": ["call_ids", "tool_calls", "skill_events", "mcp_calls", "files", "unmetered"],
+      "properties": {"call_ids": {"type": "array", "items": {"type": "string"}}, "tool_calls": {"type": "array", "items": {"type": "object", "required": ["name", "args_digest", "result_size", "duration_ms", "exit_status"], "properties": {"name": {"type": "string"}, "args_digest": {"type": "string"}, "result_size": {"type": "integer"}, "duration_ms": {"type": "integer"}, "exit_status": {"type": ["integer", "null"]}}, "additionalProperties": false}}, "skill_events": {"type": "array", "items": {"$ref": "#/$defs/skillEvent"}}, "mcp_calls": {"type": "array", "items": {"type": "object", "required": ["server", "tool", "duration_ms", "status"], "properties": {"server": {"type": "string"}, "tool": {"type": "string"}, "duration_ms": {"type": "integer"}, "status": {"type": "string"}}, "additionalProperties": false}}, "files": {"type": "array", "items": {"type": "object", "required": ["path", "added", "removed"], "properties": {"path": {"type": "string"}, "added": {"type": "integer"}, "removed": {"type": "integer"}}, "additionalProperties": false}}, "unmetered": {"type": "boolean"}},
+      "additionalProperties": false
+    },
+    "skillEventData": {
+      "type": "object",
+      "required": ["session_id", "trial_id", "skill_event"],
+      "properties": {"session_id": {"type": "string"}, "trial_id": {"type": "string"}, "skill_event": {"$ref": "#/$defs/skillEvent"}},
+      "additionalProperties": false
+    },
+    "skillEvent": {
+      "type": "object",
+      "required": ["kind", "skill", "kit_hash"],
+      "properties": {"kind": {"enum": ["listed", "loaded", "invoked"]}, "skill": {"type": "string"}, "kit_hash": {"type": "string"}},
+      "additionalProperties": false
+    }
+  }
+}
