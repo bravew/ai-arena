@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import math
 from typing import Any
 
 from arena.catalog.config import ModelCatalog
@@ -45,6 +46,8 @@ class CallsLedger:
             cost = (
                 sum(token_counts.get(kind, 0) * price for kind, price in prices.items()) / 1_000_000
             )
+            if not math.isfinite(cost):
+                raise ValueError(f"calculated call cost must be finite: {model_ref}")
             priced = call.model_copy(
                 update={"cost_usd": cost, "price_version": self._catalog.price_version}
             )

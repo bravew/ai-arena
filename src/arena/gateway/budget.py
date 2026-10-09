@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import math
 from dataclasses import dataclass
 from datetime import UTC, datetime
 
@@ -51,7 +52,7 @@ class Budget:
     """Track and reserve API spend against a hard cap, reporting other costs separately."""
 
     def __init__(self, cap_usd: float = DEFAULT_BUDGET_USD) -> None:
-        if not 0 < cap_usd <= DEFAULT_BUDGET_USD:
+        if not math.isfinite(cap_usd) or not 0 < cap_usd <= DEFAULT_BUDGET_USD:
             raise ValueError(f"budget cap must be between $0 and ${DEFAULT_BUDGET_USD:.2f}")
         self.cap_usd = cap_usd
         self._metered_spend = 0.0
@@ -71,6 +72,8 @@ class Budget:
         if subscription == (call.cost_usd is not None):
             raise ValueError("subscription calls require null cost; metered calls require a price")
         amount = call.cost_usd or 0.0
+        if not math.isfinite(amount) or amount < 0:
+            raise ValueError("estimated cost must be finite and non-negative")
         async with self._lock:
             proposed_spend = (
                 self._metered_spend
@@ -118,8 +121,8 @@ class Budget:
         billable: bool,
     ) -> None:
         call = reservation.call
-        if final_cost_usd is not None and final_cost_usd < 0:
-            raise ValueError("final cost must be non-negative")
+        if final_cost_usd is not None and (not math.isfinite(final_cost_usd) or final_cost_usd < 0):
+            raise ValueError("final cost must be finite and non-negative")
         async with self._lock:
             if call.id not in self._reserved:
                 raise ValueError(f"budget reservation not found for call: {call.id}")
@@ -158,8 +161,8 @@ class Budget:
         await reservation.settle(call.cost_usd)
 
     def record_compute_cost(self, cost_usd: float) -> None:
-        if cost_usd < 0:
-            raise ValueError("compute cost must be non-negative")
+        if not math.isfinite(cost_usd) or cost_usd < 0:
+            raise ValueError("compute cost must be finite and non-negative")
         self._compute_cost += cost_usd
 
     def report(self) -> BudgetReport:

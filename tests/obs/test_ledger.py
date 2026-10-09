@@ -1,11 +1,12 @@
 from __future__ import annotations
 
 import asyncio
+import math
 from pathlib import Path
 
 import pytest
 
-from arena.catalog.config import ModelCatalog
+from arena.catalog.config import ModelCatalog, load_catalog
 from arena.core.models import Call, Tokens
 from arena.core.store import Store
 from arena.gateway.budget import Budget, BudgetExceeded
@@ -58,6 +59,58 @@ def test_ledger_persists_full_call_and_prices_tokens(tmp_path: Path) -> None:
         assert ledger.get("c1") == recorded
         row = store.execute("SELECT details_json FROM calls WHERE id='c1'").fetchone()
         assert '"protocol_in":"anthropic"' in row[0]
+
+
+def test_catalog_loader_rejects_yaml_nan_price(tmp_path: Path) -> None:
+    catalog_path = tmp_path / "catalog.yaml"
+    catalog_path.write_text(
+        "price_version: v1\n"
+        "models:\n"
+        "  - ref: anthropic/claude-opus-5-5\n"
+        "    price_per_mtok: {in: .nan, out: 75}\n"
+    )
+
+    with pytest.raises(ValueError, match="prices must be finite and non-negative"):
+        load_catalog(catalog_path)
+
+
+@pytest.mark.parametrize("price", [math.nan, math.inf, -math.inf])
+def test_catalog_rejects_nonfinite_prices(price: float) -> None:
+    with pytest.raises(ValueError, match="prices must be finite and non-negative"):
+        ModelCatalog.model_validate(
+            {
+                "price_version": "v1",
+                "models": [
+                    {
+                        "ref": "anthropic/claude-opus-5-5",
+                        "price_per_mtok": {"in": price, "out": 75},
+                    }
+                ],
+            }
+        )
+
+
+def test_ledger_rejects_nonfinite_computed_cost_before_insert(tmp_path: Path) -> None:
+    catalog = ModelCatalog.model_validate(
+        {
+            "price_version": "v1",
+            "models": [
+                {
+                    "ref": "anthropic/claude-opus-5-5",
+                    "price_per_mtok": {"in": 1e308, "out": 75},
+                }
+            ],
+        }
+    )
+    with Store(tmp_path / "arena.db") as store:
+        store.execute("INSERT INTO runs(id, config_json, status) VALUES ('r1', '{}', 'running')")
+        store.execute(
+            "INSERT INTO trials(id, run_id, contestant_id, task_id, status) "
+            "VALUES ('t1', 'r1', 'contestant', 'task', 'running')"
+        )
+        with pytest.raises(ValueError, match="calculated call cost must be finite"):
+            CallsLedger(store, catalog).record(_call())
+        assert store.execute("SELECT COUNT(*) FROM calls").fetchone()[0] == 0
 
 
 def test_ledger_preserves_colon_in_non_effort_model_name(tmp_path: Path) -> None:
@@ -139,6 +192,49 @@ def test_budget_records_actual_over_reservation_charge_before_raising(tmp_path: 
         assert budget.metered_spend_usd == 6.0
         assert budget.report().remaining_usd == 14.0
         assert budget._reserved == {}
+
+    asyncio.run(run())
+
+
+@pytest.mark.parametrize("amount", [math.nan, math.inf, -math.inf])
+def test_budget_rejects_nonfinite_cap_and_compute_cost_without_mutation(amount: float) -> None:
+    with pytest.raises(ValueError, match="budget cap"):
+        Budget(cap_usd=amount)
+
+    budget = Budget()
+    with pytest.raises(ValueError, match="compute cost must be finite"):
+        budget.record_compute_cost(amount)
+    assert budget.report().compute_cost_usd == 0.0
+
+
+@pytest.mark.parametrize("amount", [math.nan, math.inf, -math.inf])
+def test_budget_rejects_nonfinite_estimate_without_reserving(amount: float, tmp_path: Path) -> None:
+    async def run() -> None:
+        budget = Budget()
+        with pytest.raises(ValueError, match="estimated cost must be finite"):
+            await budget.check_call(
+                _call().model_copy(update={"cost_usd": amount}), EventLog(tmp_path / "events")
+            )
+        assert budget._reserved == {}
+        assert budget.metered_spend_usd == 0.0
+
+    asyncio.run(run())
+
+
+@pytest.mark.parametrize("amount", [math.nan, math.inf, -math.inf])
+def test_budget_rejects_nonfinite_settlement_without_mutation(
+    amount: float, tmp_path: Path
+) -> None:
+    async def run() -> None:
+        budget = Budget()
+        reservation = await budget.check_call(
+            _call().model_copy(update={"cost_usd": 5.0}), EventLog(tmp_path / "events")
+        )
+        with pytest.raises(ValueError, match="final cost must be finite"):
+            await reservation.settle(amount)
+        assert budget._reserved["c1"][0] == 5.0
+        assert budget.metered_spend_usd == 0.0
+        await reservation.release()
 
     asyncio.run(run())
 
