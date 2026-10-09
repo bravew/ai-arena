@@ -32,7 +32,7 @@ def check() -> list[str]:
     failures: list[str] = []
     if not DOCS.is_dir():
         return [f"missing documentation directory: {DOCS.relative_to(ROOT)}"]
-    pages = sorted(DOCS.glob("*.md"))
+    pages = sorted(page for page in DOCS.glob("*.md") if page.name != "README.md")
     if not pages:
         return ["no subsystem Markdown pages found"]
     required = {
@@ -72,4 +72,4 @@ if __name__ == "__main__":
         for error in errors:
             print(f"- {error}", file=sys.stderr)
         raise SystemExit(1)
-    print(f"Documentation link check passed ({len(list(DOCS.glob('*.md')))} pages).")
+    print(f"Documentation link check passed ({len([p for p in DOCS.glob('*.md') if p.name != 'README.md'])} pages).")

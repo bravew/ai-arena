@@ -6,20 +6,19 @@ change, then follow its source links to check the code.
 
 ## Pages
 
-None of these exist yet. They are planned in
-[DEV_PLAN §11](../DEV_PLAN.md#repository-layout) and are added with the code
-they describe.
+Pages are added with the code they describe; see
+[DEV_PLAN §11](../DEV_PLAN.md#repository-layout).
 
 | Page | Subsystem |
 | --- | --- |
-| `gateway.md` (planned) | The gateway: protocols, plan, lanes, rests, cache, cassettes, hooks, redaction |
+| [`gateway.md`](gateway.md) | The gateway: protocols, plan, lanes, rests, cache, cassettes, hooks, redaction |
 | [`providers-catalog.md`](providers-catalog.md) | Provider config, key resolution, and the model catalog |
-| `agent-adapters.md` (planned) | One adapter per agent CLI: wiring, kit install, sessions |
-| `runners-sandbox.md` (planned) | Runners, the scheduler, and the Docker sandbox |
-| `scoring.md` (planned) | Deterministic scorers and LLM judges |
-| `stats.md` (planned) | Aggregation, bootstrap, ratings, Pareto, run-diff |
-| `observability.md` (planned) | Calls ledger, event stream, spans, metrics |
-| `viewer-live.md` (planned) | The viewer and the Live stage |
+| [`agent-adapters.md`](agent-adapters.md) | One adapter per agent CLI: wiring, kit install, sessions |
+| [`runners-sandbox.md`](runners-sandbox.md) | Runners, the scheduler, and the Docker sandbox |
+| [`scoring.md`](scoring.md) | Deterministic scorers and LLM judges |
+| [`stats.md`](stats.md) | Aggregation, bootstrap, ratings, Pareto, run-diff |
+| [`observability.md`](observability.md) | Calls ledger, event stream, spans, metrics |
+| [`viewer-live.md`](viewer-live.md) | The viewer and the Live stage |
 
 ## Page template
 
