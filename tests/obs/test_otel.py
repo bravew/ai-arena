@@ -116,7 +116,7 @@ def _call(index: int = 1, **update: Any) -> Call:
 def _attrs(span: dict[str, Any]) -> dict[str, Any]:
     out: dict[str, Any] = {}
     for item in span["attributes"]:
-        (kind, value), = item["value"].items()
+        ((kind, value),) = item["value"].items()
         out[item["key"]] = int(value) if kind == "intValue" else value
     return out
 
@@ -312,7 +312,7 @@ def test_attributes_never_carry_a_secret(collector: FakeCollector) -> None:
 
 def test_metrics_counters_gauges_and_percentiles() -> None:
     metrics = Metrics()
-    metrics.inc("rests", **{"class": "rate_limit"})
+    metrics.inc("rests", 1, **{"class": "rate_limit"})
     metrics.inc("rests", 2, **{"class": "rate_limit"})
     metrics.set_gauge("in_flight", 3, lane="k1")
     for value in range(1, 101):
@@ -418,9 +418,7 @@ def test_status_endpoints_respond_for_ops() -> None:
     metrics = Metrics()
     metrics.inc("calls")
     lane = KeyLane(concurrency=2)
-    client = _status_client(
-        lanes=lambda: {"anthropic/key1": snapshot_lane(lane)}, metrics=metrics
-    )
+    client = _status_client(lanes=lambda: {"anthropic/key1": snapshot_lane(lane)}, metrics=metrics)
 
     health = client.get("/arena/health", headers=OPS)
     assert health.status_code == 200 and health.json()["status"] == "ok"
@@ -445,7 +443,9 @@ def test_status_endpoints_require_an_ops_token() -> None:
     client = _status_client()
     for path in ("/arena/health", "/arena/lanes", "/arena/stats"):
         assert client.get(path).status_code == 401
-        assert client.get(path, headers={"authorization": "Bearer arena-trial-1"}).status_code == 403
+        assert (
+            client.get(path, headers={"authorization": "Bearer arena-trial-1"}).status_code == 403
+        )
 
 
 def test_status_without_the_gateway_middleware_fails_closed() -> None:
