@@ -6,14 +6,14 @@ change, then follow its source links to check the code.
 
 ## Pages
 
-None of these exist yet. They are planned in
-[DEV_PLAN §11](../DEV_PLAN.md#repository-layout) and are added with the code
-they describe.
+The references are added with the code they describe. Remaining planned pages
+are listed below.
 
 | Page | Subsystem |
 | --- | --- |
 | `gateway.md` (planned) | The gateway: protocols, plan, lanes, rests, cache, cassettes, hooks, redaction |
 | [`providers-catalog.md`](providers-catalog.md) | Provider config, key resolution, and the model catalog |
+| [`server.md`](server.md) | Viewer/API server, remote authentication, artifact origin, and static export |
 | `agent-adapters.md` (planned) | One adapter per agent CLI: wiring, kit install, sessions |
 | `runners-sandbox.md` (planned) | Runners, the scheduler, and the Docker sandbox |
 | [`scoring.md`](scoring.md) | The scorer framework; deterministic scorers and LLM judges plug into it |

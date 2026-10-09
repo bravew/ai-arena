@@ -78,3 +78,4 @@ def main(
 
 
 import_module("arena.cli_report")
+import_module("arena.cli_serve")
