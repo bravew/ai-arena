@@ -20,7 +20,8 @@ they describe.
 | [`stats.md`](stats.md) | Aggregation, bootstrap, ratings, Pareto, run-diff |
 | [`viewer-compare.md`](viewer-compare.md) | Compare, Trace, and Run diff views |
 | `observability.md` (planned) | Calls ledger, event stream, spans, metrics |
-| `viewer-live.md` (planned) | The viewer and the Live stage |
+| [`ops-view.md`](ops-view.md) | The Ops view: calls ledger, usage, lanes, meters and hook stats |
+| [`viewer-live.md`](viewer-live.md) | The viewer and the Live stage |
 
 ## Page template
 
