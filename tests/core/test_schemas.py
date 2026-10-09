@@ -29,7 +29,54 @@ def test_handwritten_bundle_fixture_validates_and_covers_contract_entities() -> 
 
 def test_bundle_rejects_unknown_version() -> None:
     bundle = load_bundle()
-    bundle["bundle_version"] = 2
+    bundle["bundle_version"] = 3
+
+    with pytest.raises(ValueError, match="Unsupported bundle version"):
+        validate_bundle(bundle)
+
+
+def test_bundle_v1_schema_remains_readable() -> None:
+    bundle = load_bundle()
+    bundle["bundle_version"] = 1
+    bundle.pop("provenance")
+    bundle["artifacts"][0].pop("trial_id")
+
+    validate_bundle(bundle)
+
+
+def test_bundle_v2_requires_trial_link_and_provenance() -> None:
+    bundle = load_bundle()
+    bundle["artifacts"][0].pop("trial_id")
+
+    with pytest.raises(ValidationError):
+        validate_bundle(bundle)
+
+    bundle = load_bundle()
+    bundle.pop("provenance")
+    with pytest.raises(ValidationError):
+        validate_bundle(bundle)
+
+
+def test_imported_bundle_provenance_is_explicit() -> None:
+    bundle = load_bundle()
+    bundle["provenance"] = {
+        "origin": "imported",
+        "verification": "unverified",
+        "importer": "inspect",
+        "importer_version": "1.0",
+        "source_ref": "source.json",
+    }
+
+    validate_bundle(bundle)
+
+
+@pytest.mark.parametrize(
+    "origin,verification",
+    [("native", "unverified"), ("imported", "verified")],
+)
+def test_bundle_rejects_contradictory_provenance(origin: str, verification: str) -> None:
+    bundle = load_bundle()
+    bundle["provenance"].update(origin=origin, verification=verification)
 
     with pytest.raises(ValidationError):
         validate_bundle(bundle)
