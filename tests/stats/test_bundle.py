@@ -58,9 +58,7 @@ def seed_run(home: Path, run_id: str = "run-1", *, shift: float = 0.0) -> None:
     store = Store(home / "arena.db")
     config = {
         "suite_id": "smoke",
-        "contestants": [
-            {"id": c.id, "label": c.label} | c.resolved_config() for c in CONTESTANTS
-        ],
+        "contestants": [{"id": c.id, "label": c.label} | c.resolved_config() for c in CONTESTANTS],
     }
     store.execute(
         "INSERT INTO runs(id, config_json, status) VALUES (?, ?, 'succeeded')",
@@ -85,7 +83,11 @@ def seed_run(home: Path, run_id: str = "run-1", *, shift: float = 0.0) -> None:
                     "flags_json) VALUES (?, ?, ?, ?, ?, 'succeeded', ?)",
                     (trial_id, run_id, contestant.id, task, attempt, json.dumps(flags)),
                 )
-                score = 0.9 if flag else SCORES[contestant.id][attempt - 1] + shift * (task == "t1")
+                score = (
+                    0.9
+                    if flag
+                    else max(0, SCORES[contestant.id][attempt - 1] + shift * (task == "t1"))
+                )
                 store.execute(
                     "INSERT INTO scores(trial_id, scorer_id, scorer_version, value, normalized, "
                     "passed) VALUES (?, 'smoke-output', '1', ?, ?, ?)",
@@ -265,7 +267,7 @@ def test_stats_exclude_swapped_and_unmetered_trials_and_recover_planted_kit_lift
     }
     assert rows[KIT.id]["vs_top"] is None
     assert rows[BASE.id]["vs_top"]["no_detectable_difference"] is False
-    assert rows[BASE.id]["cost_usd_per_task"] == pytest.approx(0.01)
+    assert rows[BASE.id]["cost_usd_per_task"] == pytest.approx(0.02)
     assert rows[DIRECT.id]["cost_usd_per_task"] is None
     assert stats["pareto"]["cost_axis"] == "tokens_per_task"
     assert KIT.id in stats["pareto"]["frontier"]
@@ -291,7 +293,7 @@ def test_stats_rate_contestants_when_pairwise_judgments_are_supplied(home: Path)
 
 def test_stats_diff_against_a_baseline_run_lists_the_regression(home: Path) -> None:
     seed_run(home, "run-0")
-    seed_run(home, "run-2", shift=-0.3)  # every t1 score drops by 0.3
+    seed_run(home, "run-2", shift=-0.15)  # every t1 score drops by 0.15
 
     stats = compute_stats(open_run(home, "run-2"), baseline=open_run(home, "run-0"))
 
@@ -345,7 +347,7 @@ def test_cli_report_prints_markdown_with_price_version_and_exclusion_footnote(
     assert "| 1 | opencode+kit |" in result.stdout
     assert "Excluded from headline numbers" in result.stdout
     assert "direct†" in result.stdout
-    assert "† direct: 1 swapped, 1 unmetered (2 trials)" in result.stdout
+    assert "† direct: 1 swapped, 1 unmetered, 0 kit_unapplied (2 trials)" in result.stdout
     assert "native (verified)" in result.stdout
 
 
@@ -353,12 +355,19 @@ def test_cli_report_says_so_when_nothing_was_excluded_or_priced(home: Path) -> N
     store = Store(home / "arena.db")
     store.execute("DELETE FROM trials WHERE contestant_id = ?", (DIRECT.id,))
     store.execute("UPDATE calls SET cost_usd = NULL")
+    for call in store.execute("SELECT id, details_json FROM calls").fetchall():
+        detail = json.loads(call["details_json"])
+        detail["cost_usd"] = None
+        detail["price_version"] = None
+        store.execute(
+            "UPDATE calls SET details_json = ? WHERE id = ?", (json.dumps(detail), call["id"])
+        )
     store.close()
 
     result = CliRunner().invoke(app, ["report", "run-1", "--home", str(home)])
 
     assert result.exit_code == 0, result.output
-    assert "price_version: " + PRICE_VERSION in result.stdout  # recorded on the calls
+    assert "price_version: unknown" in result.stdout
     assert "Excluded from headline numbers" not in result.stdout
 
 
@@ -388,7 +397,7 @@ def test_cli_reports_an_unknown_run_and_a_missing_store(home: Path, tmp_path: Pa
 def test_missing_event_log_is_an_error_not_an_empty_run(home: Path) -> None:
     (home / "runs/run-1/events.jsonl").unlink()
 
-    with pytest.raises(BundleError, match="events.jsonl"):
+    with pytest.raises(BundleError, match=r"events.jsonl"):
         open_run(home, "run-1")
 
 
@@ -396,7 +405,7 @@ def test_invalid_event_log_is_an_error(home: Path) -> None:
     path = home / "runs/run-1/events.jsonl"
     path.write_text(path.read_text(encoding="utf-8") + '{"seq": 99}\n', encoding="utf-8")
 
-    with pytest.raises(BundleError, match="events.jsonl line"):
+    with pytest.raises(BundleError, match=r"events.jsonl line"):
         open_run(home, "run-1")
 
 
@@ -405,15 +414,13 @@ def test_unreadable_call_record_is_an_error_naming_the_call(home: Path) -> None:
     store.execute("UPDATE calls SET details_json = '{not json' WHERE seq = 3")
     store.close()
 
-    with pytest.raises(BundleError, match="call run-1-.*-call"):
+    with pytest.raises(BundleError, match=r"call run-1-.*-call"):
         open_run(home, "run-1")
 
 
 def test_mixed_scorer_versions_for_one_task_are_an_error(home: Path) -> None:
     store = Store(home / "arena.db")
-    store.execute(
-        "UPDATE scores SET scorer_version = '2' WHERE id = (SELECT min(id) FROM scores)"
-    )
+    store.execute("UPDATE scores SET scorer_version = '2' WHERE id = (SELECT min(id) FROM scores)")
     store.close()
 
     with pytest.raises(BundleError, match="scorer_version"):

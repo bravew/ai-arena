@@ -1,0 +1,66 @@
+"""Markdown report and static bundle export commands."""
+
+from __future__ import annotations
+
+from pathlib import Path
+from typing import Annotated
+
+import typer
+
+from arena.cli import app
+from arena.core.bundle import (
+    BundleError,
+    compute_stats,
+    default_home,
+    export_bundle,
+    open_run,
+    render_report,
+)
+
+app.registered_callback  # noqa: B018 - importing this module registers its commands
+
+
+@app.command()
+def report(
+    run_id: Annotated[str, typer.Argument(help="Run ID to summarize.")],
+    format: Annotated[str, typer.Option("--format", help="Report format (md).")] = "md",
+    home: Annotated[Path | None, typer.Option("--home", help="Arena data directory.")] = None,
+    against: Annotated[
+        str | None, typer.Option("--against", help="Baseline run ID for a diff.")
+    ] = None,
+) -> None:
+    """Print a Markdown leaderboard and run summary."""
+    if format != "md":
+        typer.echo(f"unsupported report format: {format}", err=True)
+        raise typer.Exit(code=1)
+    data_home = home or default_home()
+    try:
+        records = open_run(data_home, run_id)
+        baseline = open_run(data_home, against) if against else None
+        stats = compute_stats(records, baseline=baseline)
+        typer.echo(render_report(records, stats), nl=False)
+    except BundleError as error:
+        typer.echo(str(error), err=True)
+        raise typer.Exit(code=1) from error
+
+
+@app.command()
+def export(
+    run_id: Annotated[str, typer.Argument(help="Run ID to export.")],
+    out: Annotated[Path, typer.Option("--out", help="New output directory.")],
+    format: Annotated[str, typer.Option("--format", help="Export format (bundle).")] = "bundle",
+    home: Annotated[Path | None, typer.Option("--home", help="Arena data directory.")] = None,
+) -> None:
+    """Export a validated static report bundle and its referenced blobs."""
+    if format not in {"bundle", "json"}:
+        typer.echo(f"unsupported export format: {format}", err=True)
+        raise typer.Exit(code=1)
+    data_home = home or default_home()
+    try:
+        records = open_run(data_home, run_id)
+        stats = compute_stats(records)
+        export_bundle(records, stats, out, data_home)
+    except BundleError as error:
+        typer.echo(str(error), err=True)
+        raise typer.Exit(code=1) from error
+    typer.echo(f"Exported run {run_id} to {out}")

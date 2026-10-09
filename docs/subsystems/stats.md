@@ -16,6 +16,7 @@
 | Session summaries | Summarize linked turns, tools, tokens, costs, duration and files by contestant, agent, model and kit; a missing trial record or incomplete call linkage remains explicitly partial/unknown | [`summarize_sessions`](../../src/arena/stats/sessions.py) |
 | Judge calibration | Compare available human labels, order swaps, output lengths, contestant families, and costs for explicitly linked judge call IDs; absent linkage or call records leaves cost unavailable | [`calibration_report`](../../src/arena/stats/judge_calibration.py) |
 | Kit effect | Pair kit and baseline trials by task and attempt, bootstrap paired score differences by task, and summarize uptake, observational invoked/not-invoked scores, exclusions, incomplete pairs, and cost delta | [`compute_kit_effect`, `KitEffect`](../../src/arena/stats/kit_effect.py) |
+| Run bundle and Markdown report | Read run snapshots and validated events, derive stats, produce schema-v2 bundle and atomically export metadata, events, series and verified artifact blobs; render a Markdown leaderboard with price version and exclusion footnotes | [`open_run`, `build_bundle`, `compute_stats`, `export_bundle`, `render_report`](../../src/arena/core/bundle.py); [`report`, `export`](../../src/arena/cli_report.py) |
 
 ## Runtime path
 
@@ -31,6 +32,7 @@
 10. `pareto_frontier` maximizes quality while minimizing the chosen resource. Auto mode uses tokens/task whenever any contestant is subscription-backed or has unknown dollar cost; cost labels for subscription-backed trials remain `flat`. Exact coordinate ties remain on the frontier.
 11. `compute_kit_effect` pairs kit and baseline trials on exact `(task_id, attempt)` keys. It omits pairs where either trial has an exclusion flag, reports unmatched and excluded pairs separately, and uses task-cluster bootstrap intervals for paired differences.
 12. For each skill, uptake counts kit-arm sessions with listed, loaded, and invoked events. The invoked/not-invoked score intervals are an observational split. Cost delta is the mean kit-minus-baseline cost over complete eligible pairs with cost data on both arms.
+13. `open_run` loads a run's frozen contestant config, relational rows, artifact metadata and `runs/<id>/events.jsonl`; event-derived session turns are linked to contestant agent IDs. `compute_stats` runs aggregation, chart series, session summaries, kit effects, optional ratings, and an optional baseline run diff. `report` renders the Markdown view; `export_bundle` validates metadata and events and atomically writes metadata, calls summary, events, series, stats, manifest digests and content-addressed artifact blobs.
 
 ## Constraints and failure behavior
 
@@ -45,9 +47,10 @@
 - Pairwise judgments reject empty or identical contestants and unsupported outcomes or judge sources.
 - Bradley-Terry requires at least one judgment for the requested judge and positive bootstrap samples. Disconnected comparison graphs return separate components rather than implying a global ordering. A symmetric pseudo-count keeps complete-separation outcomes finite; interpretation remains component-local.
 - Pareto input requires unique contestant IDs and finite quality/resource measurements. A dollar-cost axis requires a known dollar cost for each contestant; auto mode switches to tokens/task when a cost is unknown or subscription-backed.
+- Bundle export refuses to overwrite its destination. An absent store, run, event log or artifact blob, malformed JSON, invalid event, or invalid stored model record raises a clear error; artifact digests are verified before publication.
 
 ## Verification
 
 ```sh
-uv run pytest tests/stats/test_aggregate.py tests/stats/test_kit_effect.py tests/stats/test_ratings.py
+uv run pytest tests/stats
 ```
