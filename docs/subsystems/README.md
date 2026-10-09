@@ -16,7 +16,7 @@ they describe.
 | [`providers-catalog.md`](providers-catalog.md) | Provider config, key resolution, and the model catalog |
 | `agent-adapters.md` (planned) | One adapter per agent CLI: wiring, kit install, sessions |
 | `runners-sandbox.md` (planned) | Runners, the scheduler, and the Docker sandbox |
-| `scoring.md` (planned) | Deterministic scorers and LLM judges |
+| [`scoring.md`](scoring.md) | The scorer framework; deterministic scorers and LLM judges plug into it |
 | `stats.md` (planned) | Aggregation, bootstrap, ratings, Pareto, run-diff |
 | `observability.md` (planned) | Calls ledger, event stream, spans, metrics |
 | `viewer-live.md` (planned) | The viewer and the Live stage |

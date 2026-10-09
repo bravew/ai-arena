@@ -1,0 +1,8 @@
+def mean(values):
+    if not values:
+        raise ValueError("mean of empty sequence")
+    return sum(values) / len(values)
+
+
+def clamp(value, low, high):
+    return max(low, min(value, high))
