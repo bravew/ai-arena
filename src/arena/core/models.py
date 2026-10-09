@@ -280,6 +280,16 @@ class RunProvenance(Frozen):
     importer_version: str | None = None
     source_ref: str | None = None
 
+    @field_validator("verification")
+    @classmethod
+    def verification_matches_origin(
+        cls, verification: Literal["verified", "unverified"], info: Any
+    ) -> Literal["verified", "unverified"]:
+        expected = "verified" if info.data.get("origin", "native") == "native" else "unverified"
+        if verification != expected:
+            raise ValueError("verification must match provenance origin")
+        return verification
+
 
 class Score(Frozen):
     """Scores from different scorer versions are never mixed into one aggregate."""

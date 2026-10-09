@@ -135,6 +135,10 @@ def test_artifact_can_link_to_trial_and_provenance_defaults_native_verified() ->
     }
     imported = RunProvenance(origin="imported", verification="unverified", importer="inspect")
     assert imported.origin == "imported" and imported.verification == "unverified"
+    with pytest.raises(ValidationError, match="verification must match provenance origin"):
+        RunProvenance(origin="native", verification="unverified")
+    with pytest.raises(ValidationError, match="verification must match provenance origin"):
+        RunProvenance(origin="imported", verification="verified")
 
 
 def test_score_is_normalized_to_unit_range() -> None:

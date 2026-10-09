@@ -70,6 +70,18 @@ def test_imported_bundle_provenance_is_explicit() -> None:
     validate_bundle(bundle)
 
 
+@pytest.mark.parametrize(
+    "origin,verification",
+    [("native", "unverified"), ("imported", "verified")],
+)
+def test_bundle_rejects_contradictory_provenance(origin: str, verification: str) -> None:
+    bundle = load_bundle()
+    bundle["provenance"].update(origin=origin, verification=verification)
+
+    with pytest.raises(ValidationError):
+        validate_bundle(bundle)
+
+
 def test_bundle_rejects_normalized_score_outside_unit_interval() -> None:
     bundle = load_bundle()
     bundle["scores"][0]["normalized"] = 1.2
