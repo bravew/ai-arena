@@ -10,6 +10,7 @@
 | Model resolution | Distinguish unknown model, disabled provider and unsupported provider/model protocol | [`arena.gateway.resolve.resolve_target`](../../src/arena/gateway/resolve.py) |
 | Request orchestration | Authenticated protocol requests resolve targets, acquire per-provider lanes, invoke the injected dispatcher, and release permits on success, upstream errors, cancellation, and disconnect | [`arena.gateway.server._protocol`](../../src/arena/gateway/server.py) |
 | Dispatch contract | An immutable context passes target, prepared body, protocols, and streaming intent; caller headers and credentials are excluded | [`arena.gateway.server.DispatchContext`](../../src/arena/gateway/server.py) |
+| Cassette primitives | Normalize JSON requests, append recorded response pairs, and replay exact protocol/request matches; replay has no live fallback | [`arena.gateway.cassettes.CassetteHandler`](../../src/arena/gateway/cassettes.py) |
 | Budget and ledger context | Optional budget and ledger integrations require the injected `CallContext` to supply validated run, call, account, and pricing values | [`arena.gateway.server.CallContext`](../../src/arena/gateway/server.py) |
 | Status and metrics | Ops status routes share the authenticated middleware; request metrics are recorded and an optional OTLP exporter starts and drains with app lifespan | [`arena.gateway.status.status_routes`](../../src/arena/gateway/status.py) |
 
@@ -22,6 +23,7 @@
 5. The response streams to the caller. For streaming responses, the body iterator owns finalization: it writes the ledger row and submits the span when configured, settles or releases the budget reservation, releases the lane permit, and records request metrics after body completion, upstream body failure or ASGI cancellation/disconnect. Pre-stream failures are cleaned up by the request handler. Non-stream responses finish accounting before returning their response.
 6. `/arena/health`, `/arena/lanes`, and `/arena/stats` are mounted through the same authenticated middleware and require the ops purpose. Metrics are recorded for protocol requests. An optional OTLP exporter starts and drains in app lifespan.
 7. `GET /v1/models` lists catalog models that belong to enabled providers and pass the protocol compatibility check.
+8. A caller that selects `CassetteHandler` can wrap an injected async provider handler in record mode, or use replay mode to match the normalized protocol and JSON request against JSON Lines entries. The current server does not choose provider handlers; the #95 dispatcher integration must select the handler and convert its result to/from `UpstreamResponse`.
 
 ## Constraints and failure behavior
 
@@ -34,10 +36,11 @@
 - `LaneRejected` maps to 429 with `Retry-After`; a full lane pool maps to 503. Streaming requests ask the lane to send keepalive callbacks while waiting. The callback currently only yields to the event loop; it does not send SSE comments. Sending comments before the dispatcher returns would require coordinating a single ASGI response start with subsequent response headers and status, so keepalive wire output remains unimplemented.
 - Budget and ledger services are optional. Enabling either requires a `CallContextProvider` that returns validated run/call/account/pricing data. Missing provider configuration fails app construction; missing context for a request fails closed with 503. Budget checks also require an `EventLog`.
 - The dispatcher contract supplies response status, headers, body, token counts and optional served model. Provider credential resolution/HTTP transport and protocol adapter configuration remain with #17. Production run/call/account lookup and pre-call price estimation need explicit runtime contracts from the gateway owner; this server does not invent them or use a zero-cost estimate.
+- `CassetteReplayer` raises `CassetteMiss` when the file or matching protocol/request entry is absent. It never calls a live handler. Invalid entries and I/O failures raise `CassetteError`; record mode requires an injected handler. These primitives are not yet wired into `create_app` because dispatcher selection remains outside the owned server integration.
 - The current lane key is provider scoped (`<provider>/main`) until #18/#17 supply selected account/key identity and rest-state integration. Rate-limit and success results update the lane's adaptive concurrency.
 
 ## Verification
 
 ```sh
-uv run pytest tests/gateway/test_surface.py tests/gateway/test_server_integration.py
+uv run pytest tests/gateway/test_surface.py tests/gateway/test_server_integration.py tests/gateway/test_cassettes.py
 ```
