@@ -12,6 +12,8 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_valida
 
 ENV_REFERENCE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 ENV_TEMPLATE = re.compile(r"^\$\{[A-Za-z_][A-Za-z0-9_]*\}$")
+# A header value may carry an auth scheme in front of the reference: `Bearer ${TOKEN}`.
+ENV_HEADER_TEMPLATE = re.compile(r"^(?:(?:Bearer|Basic|Token)\s+)?\$\{[A-Za-z_][A-Za-z0-9_]*\}$")
 SECRET_FIELD = re.compile(r"(api.?key|authorization|auth|secret|token|password|credential)", re.I)
 
 
@@ -111,7 +113,7 @@ def reject_plaintext_secrets(value: Any, path: Path, location: str = "") -> list
                 child_mapping = cast(dict[str, Any], child) if isinstance(child, dict) else {}
                 env_value = child_mapping.get("env")
                 is_env_reference = (
-                    isinstance(child, str) and ENV_TEMPLATE.fullmatch(child) is not None
+                    isinstance(child, str) and ENV_HEADER_TEMPLATE.fullmatch(child) is not None
                 ) or (
                     set(child_mapping) <= {"env"}
                     and isinstance(env_value, str)
