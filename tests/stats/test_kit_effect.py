@@ -103,16 +103,22 @@ def test_partial_session_telemetry_does_not_claim_skills_were_not_used() -> None
     trials = [
         row("k-observed", "kit", "observed", 1, 0.5),
         row("b-observed", "baseline", "observed", 1, 0.5),
-        row("k-unobserved", "kit", "unobserved", 1, 0.5),
+        row("k-unobserved", "kit", "unobserved", 1, 0.9),
         row("b-unobserved", "baseline", "unobserved", 1, 0.5),
     ]
     sessions = [
         SkillSession("k-observed", "s1", {"skill-a": frozenset({"listed"})}),
+        SkillSession("k-unobserved", "s2", {}, complete=False),
     ]
 
     result = compute_kit_effect(trials, sessions)
 
     assert result.status == "incomplete_telemetry"
+    assert result.uptake["skill-a"].sessions == 1
+    split = result.observational["skill-a"]
+    assert split.not_invoked is not None
+    assert split.not_invoked.estimate == pytest.approx(0.5)
+    assert split.invoked is None
 
 
 def test_invoked_not_invoked_scores_are_observational_and_task_clustered() -> None:
@@ -158,6 +164,7 @@ def test_observational_split_omits_kit_trials_without_session_telemetry() -> Non
 
 def test_planted_lift_and_zero_are_recovered_in_seeded_simulations() -> None:
     positive_lift_recovered = 0
+    positive_lift_detected = 0
     zero_lift_undetected = 0
     for seed in range(200):
         rng = random.Random(seed)
@@ -199,16 +206,17 @@ def test_planted_lift_and_zero_are_recovered_in_seeded_simulations() -> None:
                     ]
                 )
         positive = compute_kit_effect(lift_trials, [], bootstrap_samples=300, seed=seed)
-        if (
-            positive.difference is not None
-            and positive.difference.low <= 0.15 <= positive.difference.high
-        ):
-            positive_lift_recovered += 1
+        if positive.difference is not None:
+            if positive.difference.low <= 0.15 <= positive.difference.high:
+                positive_lift_recovered += 1
+            if positive.difference.low > 0:
+                positive_lift_detected += 1
         zero = compute_kit_effect(zero_trials, [], bootstrap_samples=300, seed=seed)
         if zero.difference is not None and zero.difference.contains_zero:
             zero_lift_undetected += 1
 
     assert positive_lift_recovered >= 190
+    assert positive_lift_detected >= 190
     assert zero_lift_undetected >= 190
 
 

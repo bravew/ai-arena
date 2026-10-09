@@ -39,7 +39,7 @@
 - Exclusion footnotes report counts by reason; when multiple reasons apply to one trial, reason counts overlap but `total` counts that trial once.
 - A contestant with no eligible trials has no suite estimate or interval.
 - Kit-effect results with no complete eligible pair have no difference interval. Unmatched trials and complete-but-excluded pairs are counted separately; excluded trial reason counts can overlap while `total` counts each trial once.
-- A skill with no observed events has no uptake row. `kit_installed_skills_not_used` requires complete session telemetry for eligible kit trials; if coverage is incomplete, status is `incomplete_telemetry`. Observational score groups include only kit trials with session telemetry, so trials without a session row are unobserved rather than not-invoked. Unavailable invoked/not-invoked groups have no interval.
+- A skill with no observed events has no uptake row. `kit_installed_skills_not_used` requires complete session telemetry for eligible kit trials; if coverage is incomplete or any session is partial, status is `incomplete_telemetry`. Partial sessions are excluded from uptake and observational splits. Observational score groups include only kit trials with complete session telemetry, so trials without a complete session row are unobserved rather than not-invoked. Unavailable invoked/not-invoked groups have no interval.
 - The percentile bootstrap is a simple two-stage cluster bootstrap; it does not model scorer uncertainty or missing task populations.
 - pass@k and pass^k are unavailable for a task unless every eligible trial has a boolean `passed` label.
 - Pairwise judgments reject empty or identical contestants and unsupported outcomes or judge sources.
