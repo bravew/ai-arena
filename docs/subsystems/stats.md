@@ -15,6 +15,7 @@
 | Chart series | Precompute attributed usage, latency distributions, and prompt composition; calls without a known trial are omitted | [`chart_series`](../../src/arena/stats/series.py) |
 | Session summaries | Summarize linked turns, tools, tokens, costs, duration and files by contestant, agent, model and kit; a missing trial record or incomplete call linkage remains explicitly partial/unknown | [`summarize_sessions`](../../src/arena/stats/sessions.py) |
 | Judge calibration | Compare available human labels, order swaps, output lengths, contestant families, and costs for explicitly linked judge call IDs; absent linkage or call records leaves cost unavailable | [`calibration_report`](../../src/arena/stats/judge_calibration.py) |
+| Kit effect | Pair kit and baseline trials by task and attempt, bootstrap paired score differences by task, and summarize uptake, observational invoked/not-invoked scores, exclusions, incomplete pairs, and cost delta | [`compute_kit_effect`, `KitEffect`](../../src/arena/stats/kit_effect.py) |
 
 ## Runtime path
 
@@ -28,6 +29,8 @@
 8. `PairwiseJudgment` validates input and labels it as model-judge or human. `judgments_for` and `bradley_terry` filter by exactly one source, keeping the resulting leaderboards separate.
 9. `bradley_terry` builds comparison connected components, fits each independently with a symmetric half-win pseudo-count per directed pair, and bootstraps outcomes with a seeded PRNG. Each component has its own geometric-mean-one scale. `Ratings.leaderboard` returns separate rankings per component, and `global_leaderboard` raises when the graph is disconnected. Bootstrap intervals use linear interpolation between order statistics.
 10. `pareto_frontier` maximizes quality while minimizing the chosen resource. Auto mode uses tokens/task whenever any contestant is subscription-backed or has unknown dollar cost; cost labels for subscription-backed trials remain `flat`. Exact coordinate ties remain on the frontier.
+11. `compute_kit_effect` pairs kit and baseline trials on exact `(task_id, attempt)` keys. It omits pairs where either trial has an exclusion flag, reports unmatched and excluded pairs separately, and uses task-cluster bootstrap intervals for paired differences.
+12. For each skill, uptake counts kit-arm sessions with listed, loaded, and invoked events. The invoked/not-invoked score intervals are an observational split. Cost delta is the mean kit-minus-baseline cost over complete eligible pairs with cost data on both arms.
 
 ## Constraints and failure behavior
 
@@ -35,6 +38,8 @@
 - Mapping input rejects missing required fields and unknown fields with `ValueError`.
 - Exclusion footnotes report counts by reason; when multiple reasons apply to one trial, reason counts overlap but `total` counts that trial once.
 - A contestant with no eligible trials has no suite estimate or interval.
+- Kit-effect results with no complete eligible pair have no difference interval. Unmatched trials and complete-but-excluded pairs are counted separately; excluded trial reason counts can overlap while `total` counts each trial once.
+- A skill with no observed events has no uptake row. `kit_installed_skills_not_used` requires complete session telemetry for eligible kit trials; if coverage is incomplete or any session is partial, status is `incomplete_telemetry`. Partial sessions are excluded from uptake and observational splits. Observational score groups include only kit trials with complete session telemetry, so trials without a complete session row are unobserved rather than not-invoked. Unavailable invoked/not-invoked groups have no interval.
 - The percentile bootstrap is a simple two-stage cluster bootstrap; it does not model scorer uncertainty or missing task populations.
 - pass@k and pass^k are unavailable for a task unless every eligible trial has a boolean `passed` label.
 - Pairwise judgments reject empty or identical contestants and unsupported outcomes or judge sources.
@@ -44,5 +49,5 @@
 ## Verification
 
 ```sh
-uv run pytest tests/stats/test_aggregate.py tests/stats/test_ratings.py
+uv run pytest tests/stats/test_aggregate.py tests/stats/test_kit_effect.py tests/stats/test_ratings.py
 ```
