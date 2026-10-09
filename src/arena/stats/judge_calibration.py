@@ -49,7 +49,7 @@ def calibration_report(
     judgments: Iterable[PairJudgment],
     calls: Iterable[Call],
     *,
-    judge_model: str | None = None,
+    judge_call_ids: set[str] | None = None,
 ) -> JudgeCalibrationReport:
     """Calculate available judge metrics; absent evidence remains None and is counted."""
     rows = sorted(
@@ -106,12 +106,23 @@ def calibration_report(
         if eligible_self
         else None
     )
-    judge_calls = [
-        call
-        for call in calls
-        if judge_model is not None and call.purpose == "judge" and call.model_asked == judge_model
-    ]
-    cost_known = bool(judge_calls) and all(call.cost_usd is not None for call in judge_calls)
+    missing_calls: set[str] = set()
+    if judge_call_ids is None:
+        judge_calls: list[Call] = []
+    else:
+        call_map = {call.id: call for call in calls}
+        missing_calls = judge_call_ids - call_map.keys()
+        judge_calls = [
+            call_map[call_id]
+            for call_id in sorted(judge_call_ids & call_map.keys())
+            if call_map[call_id].purpose == "judge"
+        ]
+    cost_known = (
+        judge_call_ids is not None
+        and not missing_calls
+        and len(judge_calls) == len(judge_call_ids)
+        and all(call.cost_usd is not None for call in judge_calls)
+    )
     cost_per = sum(call.cost_usd or 0.0 for call in judge_calls) / len(rows) if cost_known else None
     return JudgeCalibrationReport(
         judge_id,

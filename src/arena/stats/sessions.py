@@ -29,6 +29,7 @@ class SessionSummary:
 
 @dataclass(frozen=True)
 class SessionGroupSummary:
+    dimension: str
     group: str
     sessions: int
     partial_sessions: int
@@ -48,6 +49,8 @@ def summarize_sessions(
     trials: Iterable[Trial],
     *,
     complete_trial_ids: set[str] | None = None,
+    trial_status_by_id: dict[str, str] | None = None,
+    contestant_dimensions: dict[str, dict[str, str]] | None = None,
 ) -> tuple[tuple[SessionSummary, ...], tuple[SessionGroupSummary, ...]]:
     """Summarize session turns and linked calls; missing linkage yields unknown metrics.
 
@@ -64,16 +67,34 @@ def summarize_sessions(
         referenced = [call_id for turn in session.turns for call_id in turn.call_ids]
         resolved = [call_map[call_id] for call_id in referenced if call_id in call_map]
         missing = len(resolved) != len(referenced)
-        complete = complete_trial_ids is None or session.trial_id in complete_trial_ids
-        partial = (
-            missing or not complete or session.status not in {"succeeded", "complete", "completed"}
+        trial_unknown = trial is None
+        trial_is_complete = (
+            trial is not None
+            and trial.status == "succeeded"
+            and (complete_trial_ids is None or session.trial_id in complete_trial_ids)
+            and (
+                trial_status_by_id is None
+                or trial_status_by_id.get(session.trial_id) == "succeeded"
+            )
         )
-        tokens_in = sum(call.tokens.in_ for call in resolved) if not missing else None
-        tokens_out = sum(call.tokens.out for call in resolved) if not missing else None
+        partial = (
+            missing
+            or not trial_is_complete
+            or session.status not in {"succeeded", "complete", "completed"}
+        )
+        tokens_in = (
+            sum(call.tokens.in_ for call in resolved) if not missing and not trial_unknown else None
+        )
+        tokens_out = (
+            sum(call.tokens.out for call in resolved) if not missing and not trial_unknown else None
+        )
         cost = (
             sum(call.cost_usd for call in resolved if call.cost_usd is not None)
-            if resolved and not missing and all(call.cost_usd is not None for call in resolved)
-            else (0.0 if not resolved and not missing else None)
+            if resolved
+            and not missing
+            and not trial_unknown
+            and all(call.cost_usd is not None for call in resolved)
+            else (0.0 if not resolved and not missing and not trial_unknown else None)
         )
         wall_ms = (
             int((session.ended_at - session.started_at).total_seconds() * 1000)
@@ -99,14 +120,22 @@ def summarize_sessions(
                 sum(len(turn.files) for turn in session.turns),
             )
         )
-    groups: dict[str, list[SessionSummary]] = defaultdict(list)
+    groups: dict[tuple[str, str], list[SessionSummary]] = defaultdict(list)
+    dimensions = contestant_dimensions or {}
     for summary in summaries:
-        groups[summary.contestant_id or "unknown"].append(summary)
+        groups[("contestant", summary.contestant_id or "unknown")].append(summary)
+        if summary.contestant_id is not None:
+            groups[("agent", summary.agent)].append(summary)
+            for dimension in ("model", "kit"):
+                value = dimensions.get(summary.contestant_id, {}).get(dimension)
+                if value is not None:
+                    groups[(dimension, value)].append(summary)
     grouped: list[SessionGroupSummary] = []
-    for key in sorted(groups):
-        rows = groups[key]
+    for dimension, key in sorted(groups):
+        rows = groups[(dimension, key)]
         grouped.append(
             SessionGroupSummary(
+                dimension,
                 key,
                 len(rows),
                 sum(row.partial for row in rows),

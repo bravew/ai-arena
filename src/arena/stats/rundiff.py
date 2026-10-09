@@ -47,10 +47,14 @@ def diff_runs(
     before_by_task: dict[tuple[str, str], dict[int, float]] = {}
     after_by_task: dict[tuple[str, str], dict[int, float]] = {}
     for record in before_records:
+        if record.swapped or record.unmetered or record.kit_unapplied:
+            continue
         before_by_task.setdefault((record.contestant_id, record.task_id), {})[record.attempt] = (
             record.score
         )
     for record in after_records:
+        if record.swapped or record.unmetered or record.kit_unapplied:
+            continue
         after_by_task.setdefault((record.contestant_id, record.task_id), {})[record.attempt] = (
             record.score
         )
@@ -74,22 +78,27 @@ def diff_runs(
                     )
                 )
                 continue
-            difference = right_task.mean - left_task.mean
+            left_by_attempt = before_by_task.get((contestant_id, task_id), {})
+            right_by_attempt = after_by_task.get((contestant_id, task_id), {})
+            attempts = sorted(left_by_attempt.keys() & right_by_attempt.keys())
+            paired_differences = [
+                right_by_attempt[attempt] - left_by_attempt[attempt] for attempt in attempts
+            ]
+            difference = (
+                sum(paired_differences) / len(paired_differences) if paired_differences else None
+            )
             if difference == 0:
                 status: Literal[
                     "improved", "regressed", "unchanged", "added", "removed", "uncertain"
                 ] = "unchanged"
             else:
-                left_by_attempt = before_by_task.get((contestant_id, task_id), {})
-                right_by_attempt = after_by_task.get((contestant_id, task_id), {})
-                attempts = sorted(left_by_attempt.keys() & right_by_attempt.keys())
                 interval: ConfidenceInterval | None = (
                     cluster_bootstrap_ci(
-                        [[right_by_attempt[a] - left_by_attempt[a] for a in attempts]],
+                        [paired_differences],
                         samples=after.bootstrap_samples,
                         seed=after.seed,
                     )
-                    if attempts
+                    if len(paired_differences) > 1
                     else None
                 )
                 status = (

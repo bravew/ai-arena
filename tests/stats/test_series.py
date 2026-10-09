@@ -93,6 +93,7 @@ def test_session_summary_marks_missing_call_data_partial_and_preserves_unknowns(
         [_call("c1", 1, "t1", tokens=Tokens.model_validate({"in": 7, "out": 4}), cost_usd=0.3)],
         trials,
         complete_trial_ids={"t1"},
+        contestant_dimensions={"c": {"model": "m1", "kit": "k1"}},
     )
 
     assert summaries[0].partial is True
@@ -104,8 +105,19 @@ def test_session_summary_marks_missing_call_data_partial_and_preserves_unknowns(
         summaries[0].tool_errors,
         summaries[0].files_touched,
     ) == (2000, 1, 1, 1)
-    assert groups[0].partial_sessions == 1
-    assert groups[0].tokens_in is None
+    group_map = {(group.dimension, group.group): group for group in groups}
+    assert group_map[("model", "m1")].partial_sessions == 1
+    assert group_map[("kit", "k1")].tokens_in is None
+
+
+def test_session_without_known_trial_is_always_partial() -> None:
+    session = Session(
+        id="orphan-session", trial_id="missing-trial", agent="agent", status="complete"
+    )
+    summaries, _ = summarize_sessions([session], [], [], complete_trial_ids={"missing-trial"})
+    assert summaries[0].partial is True
+    assert summaries[0].contestant_id is None
+    assert summaries[0].tokens_in is None
 
 
 def test_run_diff_reports_added_removed_cost_and_ci_uncertainty() -> None:
@@ -140,9 +152,67 @@ def test_run_diff_reports_added_removed_cost_and_ci_uncertainty() -> None:
     assert [(task.task_id, task.status, task.difference) for task in report.tasks] == [
         ("gone", "removed", None),
         ("new", "added", None),
-        ("t", "improved", 0.6000000000000001),
+        ("t", "uncertain", 0.6000000000000001),
     ]
     assert report.cost_delta_usd == 0.5
+
+
+def test_run_diff_uses_paired_mean_and_does_not_call_one_repeat_conclusive() -> None:
+    before = aggregate_scores(
+        [{"contestant_id": "c", "task_id": "t", "attempt": 1, "score": 0.1}],
+        bootstrap_samples=100,
+        seed=0,
+    )
+    after = aggregate_scores(
+        [{"contestant_id": "c", "task_id": "t", "attempt": 1, "score": 0.9}],
+        bootstrap_samples=100,
+        seed=0,
+    )
+    diff = diff_runs(
+        before,
+        after,
+        before_records=[TrialScore("c", "t", 1, 0.1)],
+        after_records=[TrialScore("c", "t", 1, 0.9)],
+    )[0].tasks[0]
+    assert diff.difference == 0.8
+    assert diff.status == "uncertain"
+
+
+def test_run_diff_delta_and_ci_use_same_paired_repeats_under_unequal_data() -> None:
+    before = aggregate_scores(
+        [
+            {"contestant_id": "c", "task_id": "t", "attempt": 1, "score": 0.0},
+            {"contestant_id": "c", "task_id": "t", "attempt": 2, "score": 1.0},
+            {"contestant_id": "c", "task_id": "t", "attempt": 3, "score": 0.2, "swapped": True},
+        ],
+        bootstrap_samples=100,
+        seed=2,
+    )
+    after = aggregate_scores(
+        [
+            {"contestant_id": "c", "task_id": "t", "attempt": 1, "score": 0.4},
+            {"contestant_id": "c", "task_id": "t", "attempt": 2, "score": 0.6},
+            {"contestant_id": "c", "task_id": "t", "attempt": 4, "score": 0.9},
+        ],
+        bootstrap_samples=100,
+        seed=2,
+    )
+    diff = diff_runs(
+        before,
+        after,
+        before_records=[
+            TrialScore("c", "t", 1, 0.0),
+            TrialScore("c", "t", 2, 1.0),
+            TrialScore("c", "t", 3, 0.2, swapped=True),
+        ],
+        after_records=[
+            TrialScore("c", "t", 1, 0.4),
+            TrialScore("c", "t", 2, 0.6),
+            TrialScore("c", "t", 4, 0.9),
+        ],
+    )[0].tasks[0]
+    assert diff.difference == 0.0
+    assert diff.status == "unchanged"
 
 
 def test_judge_calibration_metrics_are_hand_computed_and_missing_is_explicit() -> None:
@@ -155,8 +225,13 @@ def test_judge_calibration_metrics_are_hand_computed_and_missing_is_explicit() -
     report = calibration_report(
         "j",
         rows,
-        [_call("j1", 1, None, purpose="judge", model_asked="judge-model", cost_usd=0.8)],
-        judge_model="judge-model",
+        [
+            _call("j1", 1, None, purpose="judge", model_asked="judge-model", cost_usd=0.8),
+            _call(
+                "other-config", 2, None, purpose="judge", model_asked="judge-model", cost_usd=9.0
+            ),
+        ],
+        judge_call_ids={"j1"},
     )
 
     assert report.judgments == 4 and report.human_labeled == 3
