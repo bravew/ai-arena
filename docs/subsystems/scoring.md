@@ -11,17 +11,21 @@ plug into this framework in their own PRs and extend this page.
 | Score | One result for one trial from one `scorer_id@version`: `value`, `normalized` in [0, 1], `passed`, `rationale`, `evidence`. Defined once, in the core model. | [`Score`](../../src/arena/core/models.py) |
 | Scorer contract | A scorer has an `id` and `version` and is deterministic for a context. It must return a score for the requested trial and its own identity. | [`Scorer`, `validate_score`](../../src/arena/scorers/base.py) |
 | Scorer context | The trial ID, the trial's artifact metadata keyed by path, and read access to the blobs. `read` verifies the digest. | [`ScorerContext`](../../src/arena/scorers/base.py) |
-| Artifact index | Which artifacts a trial produced. The blob store is keyed by digest only, so the runner that records artifacts supplies this lookup. | [`ArtifactIndex`](../../src/arena/scorers/base.py) |
-| Registry | Resolves a scorer by `id@version`, or by `id` when only one version is registered. Never guesses between versions. | [`ScorerRegistry`](../../src/arena/scorers/registry.py) |
+| Artifact index | Which artifacts a trial produced. The blob store is keyed by digest only, so the lookup is a protocol. `arena score` uses `StoreArtifactIndex`, which reads the trial's `trial_artifacts` rows; a row it cannot parse is a `ScorerError`. | [`ArtifactIndex`](../../src/arena/scorers/base.py), [`StoreArtifactIndex`](../../src/arena/cli_score.py) |
+| Registry | Resolves a scorer by `id@version`, or by `id` when only one version is registered. Never guesses between versions. `default_registry` is what `arena score` offers: `visual@1` only, because execution scorers need a sandbox and judges need the gateway. | [`ScorerRegistry`, `default_registry`](../../src/arena/scorers/registry.py) |
 | Aggregation | Weighted mean of `normalized`. A failed gate caps the result at 0.3. Refuses to mix versions of one scorer. | [`aggregate_scores`](../../src/arena/scorers/base.py) |
-| Re-scoring | Reads stored artifacts, runs the named scorers, upserts `scores` rows. Never runs a trial. | [`score_run`](../../src/arena/cli_score.py) |
+| Re-scoring | Reads stored artifacts, runs the named scorers, upserts `scores` rows. Never runs a trial. `arena score` is the command around it. | [`score_run`, `create_score_command`](../../src/arena/cli_score.py), [`arena score`](../../src/arena/cli.py) |
 | Blobs | Content-addressed artifact bytes, `artifacts/<sha256>`. | [`ArtifactStore`](../../src/arena/core/cas.py) |
 | `scores` table | One row per `(trial, scorer_id, scorer_version)`. | [`001_initial.sql`](../../src/arena/core/migrations/001_initial.sql) |
+| `trial_artifacts` table | One row per `(trial, path)` with its digest, MIME type and render hint. | [`002_trial_artifacts.sql`](../../src/arena/core/migrations/002_trial_artifacts.sql) |
 
 ## Runtime path
 
-1. `arena score <run> --scorer <ref>...` builds the command with
-   [`create_score_command`](../../src/arena/cli_score.py) and calls `score_run`.
+1. `arena score <run> --scorer <ref>... [--home <dir>]` is built by
+   [`create_score_command`](../../src/arena/cli_score.py). The home is `--home`, else
+   `ARENA_HOME`, else the current directory; the store is `<home>/arena.db` and the blobs are
+   `<home>/artifacts`. The command opens the store and calls `score_run` with a
+   `StoreArtifactIndex` over it.
 2. `score_run` checks that the run exists, selects its `succeeded` and `failed` trials,
    and resolves every `--scorer` reference through the registry.
 3. For each trial it asks the `ArtifactIndex` for the trial's artifacts and reads each blob
@@ -44,8 +48,12 @@ plug into this framework in their own PRs and extend this page.
 - Trials with status `errored`, `timeout`, `queued`, `running` or `skipped` are not scored.
 - Scoring never calls a model provider or runs a container. Judges that call models come from
   their own sub-issues and go through the gateway.
-- The trial-to-artifact link is not in the CP1 schema yet. Until the runner provides an
-  `ArtifactIndex`, `arena score` is not wired into the `arena` CLI.
+- `arena score` prints `error: <message>` to stderr and exits 1 for each `ScorerError` above,
+  for a `StoreError` (an unreadable store), and when `<home>/arena.db` does not exist. It never
+  creates a store. A `trial_artifacts` row that does not parse is a `ScorerError` too, not a
+  shorter artifact list. A trial with no rows has no artifacts.
+- Re-scoring with the same `scorer_id@version` replaces that row; a new version adds a second
+  row next to it.
 
 ## Visual scorer
 
