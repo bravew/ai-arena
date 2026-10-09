@@ -1,5 +1,6 @@
 """The `arena` command line. Subcommands are added by their own modules."""
 
+from importlib import import_module
 from pathlib import Path
 from typing import Annotated
 
@@ -69,3 +70,6 @@ def main(
     ] = False,
 ) -> None:
     """Compare AI models, agents, and kits on coding and content tasks."""
+
+
+import_module("arena.cli_report")
