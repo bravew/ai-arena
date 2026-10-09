@@ -127,8 +127,6 @@ def selfcheck(paths: list[Path]) -> None:
     count = len(results)
     oracle_average = oracle_total / count
     null_average = null_total / count
-    typer.echo(
-        f"Summary: {count} task(s), oracle={oracle_average:.1f}, null={null_average:.1f}"
-    )
+    typer.echo(f"Summary: {count} task(s), oracle={oracle_average:.1f}, null={null_average:.1f}")
     if oracle_total != count or null_total != 0:
         raise typer.Exit(code=1)
