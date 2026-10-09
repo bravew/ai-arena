@@ -3,19 +3,19 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
+from dataclasses import dataclass
 from typing import Any
 
 from arena.core.modelref import Effort
 
 
-class EffortResult(dict[str, Any]):
-    """Parameters after effort mapping and the normalized level applied, if any."""
+@dataclass(frozen=True, slots=True)
+class EffortResult:
+    """Updated provider parameters and which mapped values were actually applied."""
 
+    parameters: dict[str, Any]
     effort_applied: Effort | None
-
-    def __init__(self, parameters: Mapping[str, Any], effort_applied: Effort | None) -> None:
-        super().__init__(parameters)
-        self.effort_applied = effort_applied
+    added_parameters: dict[str, Any]
 
 
 def apply_effort(
@@ -25,18 +25,24 @@ def apply_effort(
     mapping: Mapping[str, Mapping[str, Any]] | None = None,
     scaffold_carries_effort: bool = False,
 ) -> EffortResult:
-    """Apply catalog-defined provider parameters when the caller scaffold does not carry effort.
+    """Apply catalog-defined parameters when the scaffold does not carry effort.
 
-    `mapping` is the model catalog's `efforts` object, such as
-    `{"high": {"reasoning_effort": "high"}}`. Existing request values are retained.
+    Caller-supplied provider parameters win. `effort_applied` is set only when every
+    configured value is present with the requested value after applying the mapping.
     """
     parameters = dict(payload)
     if effort is None or scaffold_carries_effort:
-        return EffortResult(parameters, None)
+        return EffortResult(parameters, None, {})
 
     settings = (mapping or {}).get(effort)
-    if settings is None:
-        return EffortResult(parameters, None)
+    if not settings:
+        return EffortResult(parameters, None, {})
+
+    added: dict[str, Any] = {}
     for key, value in settings.items():
-        parameters.setdefault(key, value)
-    return EffortResult(parameters, effort)
+        if key not in parameters:
+            parameters[key] = value
+            added[key] = value
+    all_settings_applied = all(parameters.get(key) == value for key, value in settings.items())
+    applied = effort if all_settings_applied else None
+    return EffortResult(parameters, applied, added)

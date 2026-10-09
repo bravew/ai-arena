@@ -37,59 +37,89 @@ def test_same_protocol_relay_preserves_recorded_request_bytes() -> None:
     assert prepared.effort_applied is None
 
 
-def test_cross_protocol_translation_preserves_structured_output_and_records_translation() -> None:
+def test_same_protocol_effort_merge_preserves_existing_bytes_and_cache_markers() -> None:
+    body = b'{ "model" : "example/model", "cache_control":{"type":"ephemeral"} }  '
+    request = RelayRequest(
+        body=body,
+        payload={"model": "example/model", "cache_control": {"type": "ephemeral"}},
+        source_protocol="anthropic",
+        target_protocol="anthropic",
+        effort="high",
+        effort_mapping={"high": {"thinking": {"type": "enabled"}}},
+    )
+    prepared = prepare_relay(request, translator=_unexpected_translator)
+    assert prepared.body == (
+        b'{ "model" : "example/model", "cache_control":{"type":"ephemeral"} '
+        b',"thinking":{"type":"enabled"}}  '
+    )
+    assert prepared.effort_applied == "high"
+
+
+def test_same_protocol_already_mapped_effort_keeps_original_bytes() -> None:
+    body = b'{ "model" : "example/model", "reasoning_effort" : "high" } '
+    request = RelayRequest(
+        body=body,
+        payload={"model": "example/model", "reasoning_effort": "high"},
+        source_protocol="responses",
+        target_protocol="responses",
+        effort="high",
+        effort_mapping={"high": {"reasoning_effort": "high"}},
+    )
+    prepared = prepare_relay(request, translator=_unexpected_translator)
+    assert prepared.body == body
+    assert prepared.effort_applied == "high"
+
+
+def test_existing_conflicting_effort_is_not_reported_as_applied() -> None:
+    result = apply_effort(
+        {"reasoning_effort": "low"},
+        "high",
+        mapping={"high": {"reasoning_effort": "high"}},
+    )
+    assert result.parameters == {"reasoning_effort": "low"}
+    assert result.added_parameters == {}
+    assert result.effort_applied is None
+
+
+def test_cross_protocol_translation_requires_target_shaped_structured_output() -> None:
     source = {
-        "model": "anthropic/claude-opus-5-5",
-        "messages": [{"role": "user", "content": "json please"}],
+        "model": "example/model",
         "response_format": {"type": "json_schema", "json_schema": {"name": "answer"}},
     }
-    seen: list[tuple[str, str]] = []
 
     def translator(
         source_protocol: str, target_protocol: str, payload: Mapping[str, Any]
     ) -> Mapping[str, Any]:
-        seen.append((source_protocol, target_protocol))
-        translated = dict(payload)
-        translated.pop("response_format")
-        return {"model": translated["model"], "input": translated["messages"]}
+        return {"model": payload["model"], "input": []}
 
-    prepared = prepare_relay(
-        RelayRequest(
-            body=b"unused serialized request",
-            payload=source,
+    def mapper(
+        source_protocol: str, target_protocol: str, constraints: Mapping[str, Any]
+    ) -> Mapping[str, Any]:
+        assert source_protocol == "anthropic"
+        assert target_protocol == "responses"
+        assert constraints == {"response_format": source["response_format"]}
+        return {"text": {"format": {"type": "json_schema", "name": "answer"}}}
+
+    with pytest.raises(TranslationError, match="requires a structured_output_mapper"):
+        translate_request(
+            source,
             source_protocol="anthropic",
             target_protocol="responses",
-        ),
-        translator=translator,
+            translator=translator,
+        )
+
+    translated = translate_request(
+        source,
+        source_protocol="anthropic",
+        target_protocol="responses",
+        translator=lambda source, target, payload: {
+            "model": payload["model"],
+            "text": {"format": {"type": "json_schema", "name": "answer"}},
+        },
+        structured_output_mapper=mapper,
     )
-    assert seen == [("anthropic", "responses")]
-    assert prepared.translated is True
-    assert prepared.payload["response_format"] == source["response_format"]
-    assert b'"response_format"' in prepared.body
-
-
-def test_effort_is_applied_only_when_mapping_exists_and_scaffold_does_not_carry_it() -> None:
-    payload = {"model": "example/model", "input": "hello"}
-    result = apply_effort(
-        payload,
-        "high",
-        mapping={"high": {"reasoning_effort": "high", "temperature": 0.2}},
-    )
-    assert result == {**payload, "reasoning_effort": "high", "temperature": 0.2}
-    assert result.effort_applied == "high"
-
-    carried = apply_effort(
-        payload,
-        "high",
-        mapping={"high": {"reasoning_effort": "high"}},
-        scaffold_carries_effort=True,
-    )
-    assert carried == payload
-    assert carried.effort_applied is None
-
-    unmapped = apply_effort(payload, "max", mapping={"high": {"reasoning_effort": "high"}})
-    assert unmapped == payload
-    assert unmapped.effort_applied is None
+    assert "response_format" not in translated
+    assert translated["text"] == {"format": {"type": "json_schema", "name": "answer"}}
 
 
 def test_translator_failure_has_gateway_translation_error() -> None:

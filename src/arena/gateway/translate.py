@@ -1,9 +1,4 @@
-"""Protocol request translation boundary for gateway relays.
-
-Translation is injected at this boundary so the gateway can use LiteLLM's protocol
-translator without coupling request admission to a provider call. The adapter must
-return a request in the target protocol and preserve structured-output constraints.
-"""
+"""Protocol request translation boundary for gateway relays."""
 
 from __future__ import annotations
 
@@ -11,10 +6,14 @@ from collections.abc import Callable, Mapping
 from typing import Any
 
 ProtocolTranslator = Callable[[str, str, Mapping[str, Any]], Mapping[str, Any]]
+StructuredOutputMapper = Callable[[str, str, Mapping[str, Any]], Mapping[str, Any]]
+
+# Caller constraints must be represented using target-protocol fields.
+_STRUCTURED_OUTPUT_FIELDS = ("response_format", "json_schema", "structured_outputs")
 
 
 class TranslationError(ValueError):
-    """The requested protocol conversion could not be completed."""
+    """The requested protocol conversion could not be completed safely."""
 
 
 def translate_request(
@@ -23,26 +22,42 @@ def translate_request(
     source_protocol: str,
     target_protocol: str,
     translator: ProtocolTranslator,
+    structured_output_mapper: StructuredOutputMapper | None = None,
 ) -> dict[str, Any]:
-    """Translate a decoded JSON request while retaining structured-output settings.
+    """Translate a decoded JSON request and reject lost structured-output constraints.
 
-    The source payload is copied before handing it to the translator. Structured output
-    fields are restored if an adapter omits them, preventing protocol adapters from
-    silently weakening a schema-constrained request.
+    Translation adapters must express structured-output constraints in the target
+    protocol. The source-format field is never copied back into the target request.
     """
     if not source_protocol or not target_protocol:
         raise TranslationError("source and target protocols are required")
     if source_protocol == target_protocol:
         return dict(payload)
 
-    structured_fields = ("response_format", "json_schema", "structured_outputs")
-    preserved = {key: payload[key] for key in structured_fields if key in payload}
+    structured = {key: payload[key] for key in _STRUCTURED_OUTPUT_FIELDS if key in payload}
     try:
         translated = dict(translator(source_protocol, target_protocol, dict(payload)))
     except Exception as exc:
         message = f"translation from {source_protocol} to {target_protocol} failed"
         raise TranslationError(message) from exc
-    # Adapters may drop or rewrite these fields. Preserve their exact decoded values so
-    # translation cannot silently relax a caller's output constraint.
-    translated.update(preserved)
+
+    if structured:
+        if structured_output_mapper is None:
+            raise TranslationError(
+                f"translation from {source_protocol} to {target_protocol} requires a "
+                "structured_output_mapper"
+            )
+        try:
+            expected = dict(structured_output_mapper(source_protocol, target_protocol, structured))
+        except Exception as exc:
+            message = (
+                f"structured-output translation from {source_protocol} to {target_protocol} failed"
+            )
+            raise TranslationError(message) from exc
+        for key, value in expected.items():
+            if translated.get(key) != value:
+                raise TranslationError(
+                    f"translation from {source_protocol} to {target_protocol} did not "
+                    f"preserve structured-output setting {key!r}"
+                )
     return translated
