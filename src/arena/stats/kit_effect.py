@@ -100,7 +100,12 @@ class KitEffect:
     observational: Mapping[str, ObservationalSplit]
     cost_delta_usd: float | None
     cost_pairs: int
-    status: Literal["estimated", "no_complete_pairs", "kit_installed_skills_not_used"]
+    status: Literal[
+        "estimated",
+        "no_complete_pairs",
+        "kit_installed_skills_not_used",
+        "incomplete_telemetry",
+    ]
 
 
 def compute_kit_effect(
@@ -194,9 +199,22 @@ def compute_kit_effect(
     ]
     cost_delta = math.fsum(cost_values) / len(cost_values) if cost_values else None
     any_invocation = any(data.invoked > 0 for data in uptake.values())
-    status: Literal["estimated", "no_complete_pairs", "kit_installed_skills_not_used"]
+    observed_kit_trial_ids = {session.trial_id for session in kit_sessions}
+    missing_telemetry = any(
+        not (record.swapped or record.unmetered or record.kit_unapplied)
+        and record.trial_id not in observed_kit_trial_ids
+        for record in by_arm["kit"].values()
+    )
+    status: Literal[
+        "estimated",
+        "no_complete_pairs",
+        "kit_installed_skills_not_used",
+        "incomplete_telemetry",
+    ]
     if not pair_records:
         status = "no_complete_pairs"
+    elif missing_telemetry:
+        status = "incomplete_telemetry"
     elif uptake and not any_invocation:
         status = "kit_installed_skills_not_used"
     else:

@@ -99,6 +99,22 @@ def test_uptake_and_observational_split_are_explicit_with_zero_uptake() -> None:
     assert result.cost_delta_usd == pytest.approx(0.1)
 
 
+def test_partial_session_telemetry_does_not_claim_skills_were_not_used() -> None:
+    trials = [
+        row("k-observed", "kit", "observed", 1, 0.5),
+        row("b-observed", "baseline", "observed", 1, 0.5),
+        row("k-unobserved", "kit", "unobserved", 1, 0.5),
+        row("b-unobserved", "baseline", "unobserved", 1, 0.5),
+    ]
+    sessions = [
+        SkillSession("k-observed", "s1", {"skill-a": frozenset({"listed"})}),
+    ]
+
+    result = compute_kit_effect(trials, sessions)
+
+    assert result.status == "incomplete_telemetry"
+
+
 def test_invoked_not_invoked_scores_are_observational_and_task_clustered() -> None:
     trials = [
         row("k1", "kit", "task-a", 1, 1.0),
