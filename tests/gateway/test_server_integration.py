@@ -2,15 +2,18 @@
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import AsyncIterator, Mapping
 from pathlib import Path
 from typing import Any
 
 import pytest
 from starlette.testclient import TestClient
+from starlette.types import Message, Scope
 
 from arena.catalog.config import load_catalog
 from arena.core.models import Call, Tokens
+from arena.gateway.budget import Budget
 from arena.gateway.lanes import LanePool, LanePoolFull, LaneRejected
 from arena.gateway.server import (
     CallContext,
@@ -271,6 +274,224 @@ def test_budget_and_ledger_require_validated_context_configuration() -> None:
 class RecordingLedgerForConfig(LedgerWriter):
     def record(self, call: Call) -> Call:
         return call
+
+
+def test_streaming_holds_lane_until_body_finishes() -> None:
+    async def exercise() -> None:
+        lane_pool = LanePool(concurrency=1)
+        lane = lane_pool.for_key("anthropic/main")
+        first_chunk_sent = asyncio.Event()
+        allow_first_stream_to_finish = asyncio.Event()
+        dispatch_count = 0
+
+        async def body() -> AsyncIterator[bytes]:
+            yield b"first"
+            yield b"second"
+
+        async def dispatcher(context: DispatchContext) -> UpstreamResponse:
+            nonlocal dispatch_count
+            dispatch_count += 1
+            return UpstreamResponse(200, {"content-type": "text/event-stream"}, body())
+
+        app = create_app(
+            PROVIDERS, CATALOG, dispatcher=dispatcher, translator=_translator, lanes=lane_pool
+        )
+
+        async def request_receive() -> Message:
+            nonlocal request_sent
+            if not request_sent:
+                request_sent = True
+                return {"type": "http.request", "body": request_bytes, "more_body": False}
+            await asyncio.Event().wait()
+            raise AssertionError("unreachable")
+
+        async def request_send(message: Message) -> None:
+            if message["type"] == "http.response.body" and message.get("body") == b"first":
+                first_chunk_sent.set()
+                await allow_first_stream_to_finish.wait()
+
+        async def make_request() -> None:
+            nonlocal request_sent
+            request_sent = False
+            scope: Scope = {
+                "type": "http",
+                "asgi": {"version": "3.0", "spec_version": "2.3"},
+                "http_version": "1.1",
+                "method": "POST",
+                "scheme": "http",
+                "path": "/v1/messages",
+                "raw_path": b"/v1/messages",
+                "query_string": b"",
+                "root_path": "",
+                "headers": [
+                    (b"authorization", b"Bearer arena-trial-1"),
+                    (b"content-type", b"application/json"),
+                ],
+                "client": ("127.0.0.1", 12345),
+                "server": ("testserver", 80),
+            }
+            await app(scope, request_receive, request_send)
+
+        request_bytes = b'{"model":"anthropic/claude-opus-5-5","stream":true,"messages":[]}'
+        request_sent = False
+        first_request = asyncio.create_task(make_request())
+        await asyncio.wait_for(first_chunk_sent.wait(), timeout=1)
+        assert lane.in_flight == 1
+
+        second_request = asyncio.create_task(make_request())
+        await asyncio.sleep(0)
+        assert lane.queued == 1
+        assert dispatch_count == 1
+        assert lane.in_flight == 1
+
+        allow_first_stream_to_finish.set()
+        await asyncio.gather(first_request, second_request)
+        assert dispatch_count == 2
+        assert lane.in_flight == 0
+
+    asyncio.run(exercise())
+
+
+def test_streaming_body_failure_releases_lane_once() -> None:
+    async def exercise() -> None:
+        lane_pool = LanePool(concurrency=1)
+        lane = lane_pool.for_key("anthropic/main")
+        release_count = 0
+        original_release = lane.release
+
+        async def counting_release() -> None:
+            nonlocal release_count
+            release_count += 1
+            await original_release()
+
+        lane.release = counting_release  # type: ignore[method-assign]
+
+        async def failing_body() -> AsyncIterator[bytes]:
+            yield b"first"
+            raise ConnectionError("upstream stream failed")
+
+        async def dispatcher(context: DispatchContext) -> UpstreamResponse:
+            return UpstreamResponse(200, {"content-type": "text/event-stream"}, failing_body())
+
+        app = create_app(
+            PROVIDERS, CATALOG, dispatcher=dispatcher, translator=_translator, lanes=lane_pool
+        )
+        request_bytes = b'{"model":"anthropic/claude-opus-5-5","stream":true,"messages":[]}'
+        request_sent = False
+
+        async def receive() -> Message:
+            nonlocal request_sent
+            if not request_sent:
+                request_sent = True
+                return {"type": "http.request", "body": request_bytes, "more_body": False}
+            await asyncio.Event().wait()
+            raise AssertionError("unreachable")
+
+        async def send(message: Message) -> None:
+            pass
+
+        scope: Scope = {
+            "type": "http",
+            "asgi": {"version": "3.0", "spec_version": "2.3"},
+            "http_version": "1.1",
+            "method": "POST",
+            "scheme": "http",
+            "path": "/v1/messages",
+            "raw_path": b"/v1/messages",
+            "query_string": b"",
+            "root_path": "",
+            "headers": [
+                (b"authorization", b"Bearer arena-trial-1"),
+                (b"content-type", b"application/json"),
+            ],
+            "client": ("127.0.0.1", 12345),
+            "server": ("testserver", 80),
+        }
+        with pytest.raises((ConnectionError, ExceptionGroup)):
+            await app(scope, receive, send)
+        assert lane.in_flight == 0
+        assert release_count == 1
+
+    asyncio.run(exercise())
+
+
+def test_stream_cancellation_releases_lane_and_budget_once(tmp_path: Path) -> None:
+    async def exercise() -> None:
+        lane_pool = LanePool(concurrency=1)
+        lane = lane_pool.for_key("anthropic/main")
+        release_count = 0
+        original_release = lane.release
+        disconnect = asyncio.Event()
+
+        async def counting_release() -> None:
+            nonlocal release_count
+            release_count += 1
+            await original_release()
+
+        lane.release = counting_release  # type: ignore[method-assign]
+
+        async def body() -> AsyncIterator[bytes]:
+            yield b"first"
+            await asyncio.Event().wait()
+
+        async def dispatcher(context: DispatchContext) -> UpstreamResponse:
+            return UpstreamResponse(200, {"content-type": "text/event-stream"}, body())
+
+        budget = Budget()
+        events = EventLog(tmp_path / "events")
+        call_context = CallContext("trial-1", "acct-hash", "call-stream", 1, 0.01, "v1")
+        app = create_app(
+            PROVIDERS,
+            CATALOG,
+            dispatcher=dispatcher,
+            context_provider=lambda target, caller: call_context,
+            translator=_translator,
+            lanes=lane_pool,
+            budget=budget,
+            events=events,
+        )
+        request_bytes = b'{"model":"anthropic/claude-opus-5-5","stream":true,"messages":[]}'
+        request_sent = False
+        stream_started = asyncio.Event()
+
+        async def receive() -> Message:
+            nonlocal request_sent
+            if not request_sent:
+                request_sent = True
+                return {"type": "http.request", "body": request_bytes, "more_body": False}
+            await disconnect.wait()
+            return {"type": "http.disconnect"}
+
+        async def send(message: Message) -> None:
+            if message["type"] == "http.response.body" and message.get("body") == b"first":
+                stream_started.set()
+                assert budget.report().remaining_usd == pytest.approx(19.99)
+                disconnect.set()
+
+        scope: Scope = {
+            "type": "http",
+            "asgi": {"version": "3.0", "spec_version": "2.3"},
+            "http_version": "1.1",
+            "method": "POST",
+            "scheme": "http",
+            "path": "/v1/messages",
+            "raw_path": b"/v1/messages",
+            "query_string": b"",
+            "root_path": "",
+            "headers": [
+                (b"authorization", b"Bearer arena-trial-1"),
+                (b"content-type", b"application/json"),
+            ],
+            "client": ("127.0.0.1", 12345),
+            "server": ("testserver", 80),
+        }
+        await asyncio.wait_for(app(scope, receive, send), timeout=1)
+        assert stream_started.is_set()
+        assert lane.in_flight == 0
+        assert release_count == 1
+        assert budget.report().remaining_usd == pytest.approx(20.0)
+
+    asyncio.run(exercise())
 
 
 def test_lane_permit_is_released_when_stream_disconnects(tmp_path: Path) -> None:
