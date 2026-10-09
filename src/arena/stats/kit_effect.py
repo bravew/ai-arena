@@ -320,6 +320,7 @@ def _compute_observational(
             if "invoked" in kinds:
                 invoked_by_trial[session.trial_id].add(skill)
     skills: set[str] = {skill for session in sessions for skill in session.events}
+    observed_trial_ids = {session.trial_id for session in sessions}
     result: dict[str, ObservationalSplit] = {}
     for skill in sorted(skills):
         groups: dict[bool, dict[str, list[float]]] = {
@@ -327,7 +328,12 @@ def _compute_observational(
             False: defaultdict(list),
         }
         for (task_id, _), trial in kit_trials.items():
-            if trial.swapped or trial.unmetered or trial.kit_unapplied:
+            if (
+                trial.trial_id not in observed_trial_ids
+                or trial.swapped
+                or trial.unmetered
+                or trial.kit_unapplied
+            ):
                 continue
             groups[skill in invoked_by_trial[trial.trial_id]][task_id].append(trial.score)
         intervals: dict[bool, ConfidenceInterval | None] = {}

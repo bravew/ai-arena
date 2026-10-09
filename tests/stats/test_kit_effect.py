@@ -119,6 +119,27 @@ def test_invoked_not_invoked_scores_are_observational_and_task_clustered() -> No
     assert split.score_difference == 1.0
 
 
+def test_observational_split_omits_kit_trials_without_session_telemetry() -> None:
+    trials = [
+        row("k-invoked", "kit", "invoked", 1, 1.0),
+        row("b-invoked", "baseline", "invoked", 1, 0.0),
+        row("k-not-invoked", "kit", "not-invoked", 1, 0.0),
+        row("b-not-invoked", "baseline", "not-invoked", 1, 0.0),
+        row("k-no-session", "kit", "no-session", 1, 1.0),
+        row("b-no-session", "baseline", "no-session", 1, 0.0),
+    ]
+    sessions = [
+        SkillSession("k-invoked", "s1", {"skill-a": frozenset({"invoked"})}),
+        SkillSession("k-not-invoked", "s2", {"skill-a": frozenset({"listed"})}),
+    ]
+
+    split = compute_kit_effect(trials, sessions).observational["skill-a"]
+
+    assert split.invoked is not None and split.invoked.estimate == 1.0
+    assert split.not_invoked is not None and split.not_invoked.estimate == 0.0
+    assert split.score_difference == 1.0
+
+
 def test_planted_lift_and_zero_are_recovered_in_seeded_simulations() -> None:
     positive_lift_recovered = 0
     zero_lift_undetected = 0
