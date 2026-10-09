@@ -1,42 +1,7 @@
 import { useMemo } from 'react';
 import type { Bundle } from '../../lib/schema';
+import { buildPairs } from './kit-effect-data';
 import './kit-effect.css';
-
-interface Pair {
-  baseline: string;
-  kit: string;
-  label: string;
-  agent: string;
-  task: string;
-  difference: number;
-  baselineScore: number;
-  kitScore: number;
-  skillsInvoked: number;
-  skillsListed: number;
-  costDelta: number | null;
-}
-
-function buildPairs(bundle: Bundle): Pair[] {
-  const pairs: Pair[] = [];
-  for (const trial of bundle.trials) {
-    const contestant = bundle.contestants.find((item) => item.id === trial.contestant_id);
-    if (!contestant || trial.flags.kit_unapplied) continue;
-    const kit = bundle.kit_installs.find((item) => item.trial_id === trial.id);
-    if (!kit || kit.kit_hash === 'none') continue;
-    const baseline = bundle.trials.find((candidate) => candidate.task_id === trial.task_id && candidate.contestant_id !== trial.contestant_id && !candidate.flags.kit_unapplied && !bundle.kit_installs.some((item) => item.trial_id === candidate.id && item.kit_hash !== 'none'));
-    if (!baseline) continue;
-    const scores = (id: string) => bundle.scores.filter((score) => score.trial_id === id).map((score) => score.normalized);
-    const baseScore = scores(baseline.id);
-    const kitScore = scores(trial.id);
-    if (!baseScore.length || !kitScore.length) continue;
-    const baseCalls = bundle.calls.filter((call) => call.trial_id === baseline.id);
-    const kitCalls = bundle.calls.filter((call) => call.trial_id === trial.id);
-    const cost = (calls: typeof baseCalls) => calls.every((call) => call.cost_usd !== null) ? calls.reduce((sum, call) => sum + (call.cost_usd ?? 0), 0) : null;
-    const skillEvents = bundle.sessions.filter((session) => session.trial_id === trial.id).flatMap((session) => session.turns.flatMap((turn) => turn.skill_events));
-    pairs.push({ baseline: baseline.id, kit: trial.id, label: contestant.label ?? contestant.model, agent: contestant.scaffold?.id ?? contestant.id, task: trial.task_id, baselineScore: baseScore.reduce((a, b) => a + b, 0) / baseScore.length, kitScore: kitScore.reduce((a, b) => a + b, 0) / kitScore.length, difference: kitScore.reduce((a, b) => a + b, 0) / kitScore.length - baseScore.reduce((a, b) => a + b, 0) / baseScore.length, skillsInvoked: skillEvents.filter((event) => event.kind === 'invoked').length, skillsListed: skillEvents.filter((event) => event.kind === 'listed').length, costDelta: cost(kitCalls) === null || cost(baseCalls) === null ? null : (cost(kitCalls) ?? 0) - (cost(baseCalls) ?? 0) });
-  }
-  return pairs;
-}
 
 export function KitEffectView({ bundle }: { bundle: Bundle }) {
   const pairs = useMemo(() => buildPairs(bundle), [bundle]);
