@@ -57,16 +57,24 @@ repository-editing workflow, not a different task metadata schema.
 Run all executable tasks under a suite directory:
 
 ```sh
-uv run arena selfcheck suites/code suites/agentic
+uv run arena selfcheck --trust-task-code suites/code suites/agentic
 ```
 
 Or pass individual task directories or `task.yaml` files. Selfcheck uses the
 execution scorer command with the task's oracle and null solutions in separate
-system-temporary workspaces. Each workspace gets an isolated temporary `HOME`.
-It prints `oracle=1.0` and `null=0.0` per task and fails if either result is
-reversed, if task metadata or required files are invalid, or if a command times
-out. It invokes the scorer without a shell and provides no provider credentials. The
-TypeScript starter tasks use Node.js 22.6 or later with
+temporary workspaces. It prints `oracle=1.0` and `null=0.0` per task and fails
+if either result is reversed, if task metadata or required files are invalid, or
+if a command times out. It invokes the scorer without a shell and provides no
+provider credentials.
+
+**Trust boundary:** Selfcheck runs scorer commands, test files, fixture code and
+oracle/null code directly on the host with the current user's privileges. A
+temporary workspace and temporary `HOME` are conveniences, not a sandbox or
+security boundary. Review suites before running them and use `--trust-task-code`
+only for trusted local inputs. Running untrusted tasks requires an external
+sandbox; selfcheck does not provide one.
+
+The TypeScript starter tasks use Node.js 22.6 or later with
 `--experimental-strip-types`; Go tasks require the Go toolchain, and Rust tasks
 require Cargo and rustc.
 

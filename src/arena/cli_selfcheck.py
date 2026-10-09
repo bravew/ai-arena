@@ -91,8 +91,15 @@ def _run_solution(directory: Path, solution: str, command: list[str]) -> bool:
         return result.returncode == 0
 
 
-def selfcheck(paths: list[Path]) -> None:
-    """Check executable task oracles pass and null solutions fail their tests."""
+def selfcheck(paths: list[Path], *, trust_task_code: bool = False) -> None:
+    """Check trusted task solutions; scorer commands run on the host without sandboxing."""
+    if not trust_task_code:
+        typer.echo(
+            "Selfcheck runs scorer commands and solution code with host privileges. "
+            "Only use trusted local suites; pass --trust-task-code to confirm.",
+            err=True,
+        )
+        raise typer.Exit(code=2)
     try:
         directories = _task_directories(paths)
         results: list[tuple[str, bool, bool]] = []

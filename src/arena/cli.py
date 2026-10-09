@@ -60,9 +60,16 @@ def validate(
 @app.command(name="selfcheck")
 def selfcheck_command(
     paths: Annotated[list[Path], typer.Argument(help="Suite directories or task.yaml files.")],
+    trust_task_code: Annotated[
+        bool,
+        typer.Option(
+            "--trust-task-code",
+            help="Confirm these local suites and scorer commands are trusted to run on this host.",
+        ),
+    ] = False,
 ) -> None:
-    """Run oracle and null solutions through executable task tests."""
-    selfcheck(paths)
+    """Run trusted task scorer commands with host privileges against oracle and null."""
+    selfcheck(paths, trust_task_code=trust_task_code)
 
 
 @app.callback()
