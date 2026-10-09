@@ -213,7 +213,15 @@ async def run_jobs(
                     )
                 raise
 
-    await asyncio.gather(*(execute(job) for job in pending))
+    results = await asyncio.gather(*(execute(job) for job in pending), return_exceptions=True)
+    cancellations = [result for result in results if isinstance(result, asyncio.CancelledError)]
+    if cancellations:
+        raise cancellations[0]
+    failures = [result for result in results if isinstance(result, Exception)]
+    if failures:
+        if store is not None:
+            store.execute("UPDATE runs SET status='errored' WHERE id=?", (run_id,))
+        raise failures[0]
     if store is not None:
         store.execute("UPDATE runs SET status='succeeded' WHERE id=?", (run_id,))
     return RunSummary(len(jobs), created, completed, cache_hits, skipped)

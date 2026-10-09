@@ -29,6 +29,7 @@
 - A wall-time limit raises `TimeoutError` and removes the container and network. Cancellation propagates after shielded teardown.
 - A successful deterministic trial id is treated as a cache hit on rerun. `--dry-run` returns the planned count before opening the store. `--resume` reruns non-succeeded trial rows for the selected run id.
 - The scheduler catches `SubscriptionRest`, reports the remaining seconds through its countdown callback and holds the job until reset. Other jobs continue subject to global and per-contestant concurrency limits.
+- If a trial fails, the scheduler waits for sibling trials to finish, marks the run `errored`, and re-raises the first failure. Resume retries non-succeeded trials; cancellation leaves the run resumable.
 - The CLI currently dispatches to the mock adapter, so it does not call a provider or the gateway. Non-mock gateway execution and price-informed estimates require the gateway dispatcher and matching model catalog entries to be wired in.
 - Workspace files are writable for agent output. The caller must provide a trial-scoped directory; this backend does not validate workspace contents or impose a disk quota.
 

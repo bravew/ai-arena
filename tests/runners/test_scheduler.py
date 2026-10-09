@@ -50,6 +50,53 @@ def test_expands_exact_jobs_and_persists_cache_resume(tmp_path: Path) -> None:
         assert len(calls) == 13
 
 
+def test_executor_failure_waits_for_siblings_and_marks_run_errored(tmp_path: Path) -> None:
+    jobs = [
+        TrialJob(contestant=contestant(), task=task(name), repeat=1) for name in ("fails", "slow")
+    ]
+    sibling_finished = False
+    calls: list[str] = []
+
+    async def execute(job: TrialJob) -> CompletionResult:
+        nonlocal sibling_finished
+        calls.append(job.task.id)
+        if job.task.id == "fails":
+            await asyncio.sleep(0)
+            raise RuntimeError("trial failed")
+        await asyncio.sleep(0.01)
+        sibling_finished = True
+        return CompletionResult(text="done")
+
+    with Store(tmp_path / "arena.db") as store:
+        try:
+            asyncio.run(run_jobs(store, "run-failure", jobs, execute))
+        except RuntimeError as error:
+            assert str(error) == "trial failed"
+        else:
+            raise AssertionError("run_jobs should propagate the executor failure")
+
+        assert sibling_finished
+        assert store.execute("SELECT status FROM runs WHERE id='run-failure'").fetchone()[0] == (
+            "errored"
+        )
+        statuses = {
+            row["task_id"]: row["status"]
+            for row in store.execute("SELECT task_id, status FROM trials")
+        }
+        assert statuses == {"fails": "errored", "slow": "succeeded"}
+
+        async def resume(job: TrialJob) -> CompletionResult:
+            calls.append(f"resume:{job.task.id}")
+            return CompletionResult(text="recovered")
+
+        result = asyncio.run(run_jobs(store, "run-failure", jobs, resume, resume=True))
+        assert result.completed == 1
+        assert calls == ["fails", "slow", "resume:fails"]
+        assert store.execute("SELECT status FROM runs WHERE id='run-failure'").fetchone()[0] == (
+            "succeeded"
+        )
+
+
 def test_scheduler_enforces_both_concurrency_caps() -> None:
     running = 0
     peak = 0
