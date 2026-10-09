@@ -92,6 +92,8 @@ def classify_failure(status: int, body: bytes | str) -> FailureClass | None:
         and not (_QUOTA.search(message) or _CREDIT.search(message))
     ):
         return FailureClass.MODEL_REFUSED
+    if status == 408:
+        return FailureClass.TIMEOUT
     if status in (500, 502, 503, 504):
         return FailureClass.UPSTREAM
     if any(code in message.casefold() for code in _REFUSAL_CODES):

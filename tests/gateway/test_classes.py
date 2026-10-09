@@ -76,6 +76,11 @@ def test_classification_is_narrow(
     assert classify_failure(status, neighbor_body) is neighbor
 
 
+def test_request_timeout_is_not_upstream_server_error() -> None:
+    assert classify_failure(408, b"request timeout") is FailureClass.TIMEOUT
+    assert classify_failure(503, b"upstream unavailable") is FailureClass.UPSTREAM
+
+
 def test_rate_limited_key_rests_and_next_candidate_is_usable() -> None:
     now = datetime(2026, 1, 1, tzinfo=UTC)
     book = RestBook()
