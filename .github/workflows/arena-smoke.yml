@@ -24,10 +24,12 @@ jobs:
         env:
           ARENA_SMOKE_STATUS: ${{ job.status }}
           ARENA_SMOKE_RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
-        run: python scripts/post_summary.py
+        run: |
+          python scripts/post_summary.py > smoke-summary.md
+          cat smoke-summary.md >> "$GITHUB_STEP_SUMMARY"
       - name: Comment summary on pull request
         if: always()
         env:
           GH_TOKEN: ${{ github.token }}
           PR_URL: ${{ github.event.pull_request.html_url }}
-        run: gh pr comment "$PR_URL" --body-file "$GITHUB_STEP_SUMMARY"
+        run: gh pr comment "$PR_URL" --body-file smoke-summary.md
