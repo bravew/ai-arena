@@ -36,17 +36,25 @@ function LiveRun({ bundle, replayEvents }: { bundle: LiveBundle; replayEvents: R
   const [documentVisible, setDocumentVisible] = useState(() => document.visibilityState !== 'hidden');
   const prefersReducedMotion = useReducedMotion();
   const totals = ledgerTotals(bundle);
-  const snapshot = useMemo(() => reduceEvents(events.slice(0, cursor)), [cursor, events]);
+  const visibleCursor = source instanceof ReplaySource ? cursor : events.length;
+  const snapshot = useMemo(() => reduceEvents(events.slice(0, visibleCursor)), [visibleCursor, events]);
   const contestants = bundle.contestants;
   const trials = [...snapshot.trials.entries()].map(([id, trial]) => ({ id, ...trial }));
-  const currentEvents = events.slice(0, cursor);
+  const currentEvents = events.slice(0, visibleCursor);
   const boardTrials = [...trials, ...bundle.trials.filter((trial) => !snapshot.trials.has(trial.id) && currentEvents.some((event) => event.ref === trial.id && (event.kind === 'trial_queued' || event.kind === 'trial_started'))).map((trial) => ({ id: trial.id, contestantId: trial.contestant_id, taskId: trial.task_id, status: 'queued' }))];
   const completed = trials.filter((trial) => ['succeeded', 'failed', 'errored', 'timeout', 'skipped'].includes(trial.status)).length;
 
   useEffect(() => {
-    void source.read().then(setEvents).catch((error: unknown) => setSourceError(error instanceof Error ? error.message : String(error)));
-    const unsubscribe = source.subscribe?.((incoming) => setEvents((previous) => mergeEvents(previous, incoming)), (error) => setSourceError(error.message));
-    return () => unsubscribe?.();
+    let active = true;
+    const receive = (incoming: RunEvent[]) => {
+      if (active) setEvents((previous) => source instanceof ReplaySource ? incoming : mergeEvents(previous, incoming));
+    };
+    const failed = (error: unknown) => {
+      if (active) setSourceError(error instanceof Error ? error.message : String(error));
+    };
+    void source.read().then(receive).catch(failed);
+    const unsubscribe = source.subscribe?.(receive, failed);
+    return () => { active = false; unsubscribe?.(); };
   }, [source]);
 
   useEffect(() => {
@@ -79,7 +87,7 @@ function LiveRun({ bundle, replayEvents }: { bundle: LiveBundle; replayEvents: R
     const animate = () => {
       if (!active) return;
       frameCountRef.current += 1;
-      setObservedFrames(frameCountRef.current);
+      if (frameCountRef.current % 15 === 0) setObservedFrames(frameCountRef.current);
       frameRef.current = requestAnimationFrame(animate);
     };
     frameRef.current = requestAnimationFrame(animate);
@@ -99,6 +107,7 @@ function LiveRun({ bundle, replayEvents }: { bundle: LiveBundle; replayEvents: R
   }, [documentVisible, playing, prefersReducedMotion, visible]);
 
   const play = () => {
+    if (playing) { setPlaying(false); return; }
     if (prefersReducedMotion) { setCursor(events.length); setPlaying(false); return; }
     if (cursor >= events.length) setCursor(0);
     setPlaying(true);

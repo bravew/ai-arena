@@ -22,6 +22,7 @@
 
 - Lane records use the gateway `/arena/lanes` `lanes` envelope fields `in_flight`, `queued`, `concurrency`, `resting_until` and `rest_class`. Gateway `/arena/stats` metrics are precomputed by its metrics registry; this fixture UI does not derive historical series from raw counters.
 - The view uses fixture data by default and makes no live gateway requests. It does not imply that live health, lane state, hook instrumentation or vendor subscription meters were exercised.
+- For the web-only #134 acceptance follow-up, the real-gateway exercise criterion is dropped. This CP6 checkout has no implemented `/arena/lanes` route or viewer gateway adapter; adding gateway routing and authentication would cross issue ownership. The fixture regression covers lane rendering and the call ledger and does not count as a real gateway exercise. The production adapter and its integration exercise remain future gateway/viewer integration work.
 - A missing cost is displayed as `flat`; it is not converted to zero. Meter, lane and hook values have no live-source error state until a live data adapter is integrated.
 
 ## Verification
