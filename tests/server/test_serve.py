@@ -147,6 +147,49 @@ def test_remote_artifact_requires_the_api_signed_session_cookie(tmp_path: Path) 
         artifact.server_close()
 
 
+def test_loopback_run_key_sign_in_unlocks_artifacts(tmp_path: Path) -> None:
+    from arena.core.cas import ArtifactStore
+
+    secret = b"local-sign-in-test-secret"
+    key = "local-test-key"
+    digest = ArtifactStore(tmp_path / "artifacts").put(b"protected local artifact")
+    api = create_server("127.0.0.1", 0, tmp_path, run_key=key, session_secret=secret)
+    artifact = create_server(
+        "127.0.0.1", 0, tmp_path, run_key=key, session_secret=secret, artifacts=True
+    )
+    run(api)
+    run(artifact)
+    try:
+        api_url = f"http://127.0.0.1:{api.server_address[1]}"
+        artifact_url = f"http://127.0.0.1:{artifact.server_address[1]}/artifacts/{digest}"
+        assert request(artifact_url)[0] == 401
+        assert request(api_url + "/auth/sign-in", method="POST", body=b'{"key":"wrong"}')[0] == 401
+        status, _, headers = request(
+            api_url + "/auth/sign-in", method="POST", body=b'{"key":"local-test-key"}'
+        )
+        assert status == 204
+        cookie = headers["Set-Cookie"].split(";", 1)[0]
+        assert "HttpOnly" in headers["Set-Cookie"] and "Secure" in headers["Set-Cookie"]
+        assert request(artifact_url, headers={"Cookie": cookie})[:2] == (
+            200,
+            b"protected local artifact",
+        )
+        assert (
+            request(
+                api_url + "/auth/sign-in",
+                method="POST",
+                body=b'{"key":"local-test-key"}',
+                headers={"Origin": "https://foreign.example"},
+            )[0]
+            == 403
+        )
+    finally:
+        api.shutdown()
+        artifact.shutdown()
+        api.server_close()
+        artifact.server_close()
+
+
 def test_default_server_serves_api_and_artifacts_on_separate_origins(tmp_path: Path) -> None:
     from arena.core.cas import ArtifactStore
 

@@ -161,7 +161,7 @@ def create_server(
                 if self.headers.get("Origin"):
                     self.send_json(403, {"error": "cross-origin sign-in is refused"})
                     return
-                if not off_box:
+                if not run_key:
                     self.send_json(404, {"error": "not found"})
                     return
                 if not self.request_is_https():

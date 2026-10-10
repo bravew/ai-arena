@@ -20,7 +20,7 @@
 
 ## Constraints and failure behavior
 
-- Loopback is the default. A non-loopback bind without both a run key and `--trusted-proxy` / `ARENA_TRUSTED_PROXY` fails before listening. The artifact listener is also bound off-box in this configuration and requires the API-issued signed session cookie. A loopback artifact listener with a run key also requires that cookie; the default loopback configuration without a run key allows local artifact reads. Remote sign-in accepts `X-Forwarded-Proto: https` only when the socket peer matches the configured proxy IP; the proxy must terminate TLS and replace that header. The sign-in key is accepted only in a bounded POST JSON body. Success sets a Secure, HttpOnly, SameSite=Strict cookie.
+- Loopback is the default. A non-loopback bind without both a run key and `--trusted-proxy` / `ARENA_TRUSTED_PROXY` fails before listening. The artifact listener is also bound off-box in this configuration and requires the API-issued signed session cookie. A loopback artifact listener with a run key also requires that cookie, and the loopback API accepts sign-in when that key is configured; the default loopback configuration without a run key allows local artifact reads. Remote sign-in accepts `X-Forwarded-Proto: https` only when the socket peer matches the configured proxy IP; the proxy must terminate TLS and replace that header. The sign-in key is accepted only in a bounded POST JSON body. Success sets a Secure, HttpOnly, SameSite=Strict cookie.
 - Any non-auth POST carrying an `Origin` header returns 403. Unauthenticated remote POSTs return 401. GET on `/auth/sign-in` returns 405.
 - The gateway has no route or listener in this package. When the viewer/API binds off-box, the artifact listener shares that bind and must sit behind the configured trusted TLS proxy. Artifact documents run in a CSP sandbox without script or same-origin privileges; only an explicit set of complete MIME values is taken from artifact metadata, with unknown types served as `application/octet-stream`.
 - Run IDs and artifact digests are constrained before filesystem access. Event parse/schema failures return an error and are not reported as an empty event stream.
@@ -30,6 +30,7 @@
 ## Verification
 
 - `uv run pytest tests/server tests/test_cli.py`
+- `uv run --with playwright pytest tests/server/test_artifact_browser.py` verifies actual browser script blocking, sandbox cookie denial and blocked API response. The optional test skips when Python Playwright is unavailable.
 - `uv run pyright`
 - `uv run ruff check`
 - `uv run ruff format --check`
