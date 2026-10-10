@@ -13,8 +13,11 @@ tests and small runs; it buffers the whole reply, so it does not stream.
 from __future__ import annotations
 
 import asyncio
+import contextlib
+import ipaddress
 import json
 import re
+import socket
 import time
 import urllib.error
 import urllib.request
@@ -32,10 +35,20 @@ _FORWARDED_REQUEST = frozenset({"accept", "content-type", "mcp-session-id", "mcp
 _RETURNED_REPLY = frozenset({"content-type", "mcp-session-id", "retry-after"})
 _MAX_REQUEST = 4 * 1024 * 1024
 _MAX_CAPTURE = 1024 * 1024
+_MAX_REPLY = 8 * 1024 * 1024
+_ALLOWED_METHODS = frozenset({"POST", "GET", "DELETE"})
 
 
 class McpConfigError(ValueError):
     """The kit's MCP servers cannot be served: an unset variable or an unusable URL."""
+
+
+class McpReplyTooLarge(RuntimeError):
+    """An upstream MCP reply exceeded the proxy's bounded response size."""
+
+
+class McpDestinationError(ValueError):
+    """A configured MCP host resolves to an address the daemon must not contact."""
 
 
 @dataclass(frozen=True)
@@ -57,7 +70,9 @@ class UpstreamReply:
 
 
 class McpUpstream(Protocol):
-    async def post(self, url: str, *, body: bytes, headers: Mapping[str, str]) -> UpstreamReply: ...
+    async def request(
+        self, method: str, url: str, *, body: bytes | None, headers: Mapping[str, str]
+    ) -> UpstreamReply: ...
 
 
 SpanSink = Callable[[McpSpan], None]
@@ -76,16 +91,37 @@ class _Route:
     headers: Mapping[str, str]
 
 
-def resolve_routes(servers: Sequence[McpServer], env: Mapping[str, str]) -> dict[str, _Route]:
-    """Resolve `${ENV}` in headers on the daemon, failing on every unset name at once."""
+def resolve_routes(
+    servers: Sequence[McpServer],
+    env: Mapping[str, str],
+    *,
+    allowed_hosts: frozenset[str],
+) -> dict[str, _Route]:
+    """Resolve secrets and reject private IP literals; optionally pin approved hostnames.
+
+    Production should pass administrator-approved hostnames. The standard default refuses
+    private and reserved IP literals. Hostnames are resolved and checked again on every request
+    by `UrllibUpstream` to reduce DNS rebinding risk.
+    """
     routes: dict[str, _Route] = {}
     missing: set[str] = set()
     for server in servers:
+        if server.name in routes:
+            raise McpConfigError(f"duplicate MCP server name {server.name!r}")
         if not server.url:
             continue
         parts = urlsplit(server.url)
-        if parts.scheme not in {"http", "https"} or not parts.hostname or parts.username:
+        host = (parts.hostname or "").lower().rstrip(".")
+        if parts.scheme not in {"http", "https"} or not host or parts.username or parts.password:
             raise McpConfigError(f"mcp {server.name}: url must be http(s) without credentials")
+        try:
+            ip = ipaddress.ip_address(host.strip("[]"))
+        except ValueError:
+            ip = None
+        if not allowed_hosts or host not in allowed_hosts:
+            raise McpDestinationError(f"mcp {server.name}: host {host!r} is not allowlisted")
+        if ip is not None and (not ip.is_global or ip.is_reserved):
+            raise McpDestinationError(f"mcp {server.name}: private or reserved IP destination")
         headers: dict[str, str] = {}
         for key, value in server.headers.items():
             missing.update(name for name in _ENV_REFERENCE.findall(value) if not env.get(name))
@@ -105,8 +141,9 @@ class McpProxy:
         env: Mapping[str, str],
         upstream: McpUpstream,
         spans: SpanSink | None = None,
+        allowed_hosts: frozenset[str],
     ) -> None:
-        self._routes = resolve_routes(servers, env)
+        self._routes = resolve_routes(servers, env, allowed_hosts=allowed_hosts)
         self._upstream = upstream
         self._spans = spans
 
@@ -114,15 +151,27 @@ class McpProxy:
         return tuple(self._routes)
 
     async def handle(
-        self, name: str, body: bytes, headers: Mapping[str, str], *, trial_id: str
+        self,
+        name: str,
+        method: str,
+        body: bytes,
+        headers: Mapping[str, str],
+        *,
+        trial_id: str,
     ) -> ProxyReply:
-        """Forward one JSON-RPC POST. The caller has already authenticated the trial token."""
+        """Forward one MCP POST, GET event stream or DELETE session request.
+
+        The gateway route must authenticate the trial token before calling this method.
+        """
         route = self._routes.get(name)
         if route is None:
             return _error(404, "unknown_mcp_server", "no such MCP server in this kit")
-        if len(body) > _MAX_REQUEST:
+        method = method.upper()
+        if method not in {"POST", "GET", "DELETE"}:
+            return _error(405, "method_not_allowed", "MCP supports POST, GET and DELETE")
+        if method == "POST" and len(body) > _MAX_REQUEST:
             return _error(413, "request_too_large", "MCP request body is too large")
-        tools = _tool_names(body)
+        tools = _tool_names(body) if method == "POST" else [method.lower()]
         if tools is None:
             return _error(400, "invalid_request", "body must be a JSON-RPC message")
 
@@ -141,7 +190,9 @@ class McpProxy:
                 self._spans(McpSpan(trial_id, name, tool, elapsed, status))
 
         try:
-            reply = await self._upstream.post(route.url, body=body, headers=forwarded)
+            reply = await self._upstream.request(
+                method, route.url, body=body if method == "POST" else None, headers=forwarded
+            )
         except Exception:
             record("error")
             return _error(502, "mcp_upstream_error", "MCP server request failed")
@@ -149,9 +200,14 @@ class McpProxy:
 
         async def stream() -> AsyncIterator[bytes]:
             captured = bytearray()
+            total = 0
             ok = 200 <= reply.status_code < 300
             try:
                 async for chunk in reply.body:
+                    if total + len(chunk) > _MAX_REPLY:
+                        ok = False
+                        raise McpReplyTooLarge(f"MCP reply exceeded {_MAX_REPLY} bytes")
+                    total += len(chunk)
                     if len(captured) < _MAX_CAPTURE:
                         captured.extend(chunk[: _MAX_CAPTURE - len(captured)])
                     yield chunk
@@ -219,27 +275,70 @@ def _error(status: int, kind: str, message: str) -> ProxyReply:
 class UrllibUpstream:
     """Standard-library upstream: one blocking POST in a thread, reply buffered."""
 
-    def __init__(self, *, timeout: float = 60.0) -> None:
+    def __init__(
+        self,
+        *,
+        timeout: float = 60.0,
+        allowed_hosts: frozenset[str],
+    ) -> None:
         self._timeout = timeout
+        self._allowed_hosts = frozenset(host.lower().rstrip(".") for host in allowed_hosts)
+        if not self._allowed_hosts:
+            raise ValueError("UrllibUpstream requires an administrator MCP host allowlist")
 
-    async def post(self, url: str, *, body: bytes, headers: Mapping[str, str]) -> UpstreamReply:
-        status, reply_headers, data = await asyncio.to_thread(self._post, url, body, dict(headers))
+    async def request(
+        self, method: str, url: str, *, body: bytes | None, headers: Mapping[str, str]
+    ) -> UpstreamReply:
+        status, reply_headers, data = await asyncio.to_thread(
+            self._request, method, url, body, dict(headers)
+        )
 
         async def chunks() -> AsyncIterator[bytes]:
             yield data
 
         return UpstreamReply(status, reply_headers, chunks())
 
-    def _post(
-        self, url: str, body: bytes, headers: dict[str, str]
+    def _request(
+        self, method: str, url: str, body: bytes | None, headers: dict[str, str]
     ) -> tuple[int, dict[str, str], bytes]:
-        request = urllib.request.Request(url, data=body, headers=headers, method="POST")
+        if method not in _ALLOWED_METHODS:
+            raise McpConfigError(f"unsupported MCP method {method!r}")
+        self._check_destination(url)
+        request = urllib.request.Request(url, data=body, headers=headers, method=method)
         opener = urllib.request.build_opener(_NoRedirect)
         try:
             with opener.open(request, timeout=self._timeout) as response:
-                return response.status, dict(response.headers.items()), response.read()
+                return response.status, dict(response.headers.items()), _bounded_read(response)
         except urllib.error.HTTPError as error:
-            return error.code, dict(error.headers.items()), error.read()
+            return error.code, dict(error.headers.items()), _bounded_read(error)
+
+    def _check_destination(self, url: str) -> None:
+        host = urlsplit(url).hostname
+        if host is None:
+            raise McpDestinationError("MCP URL has no host")
+        normalized = host.lower().rstrip(".")
+        if normalized not in self._allowed_hosts:
+            raise McpDestinationError(f"host {normalized!r} is not allowlisted")
+        try:
+            addresses = socket.getaddrinfo(normalized, None, type=socket.SOCK_STREAM)
+        except OSError as error:
+            raise McpDestinationError("MCP host could not be resolved") from error
+        if not addresses:
+            raise McpDestinationError("MCP host has no addresses")
+        explicitly_allowed_ip = False
+        with contextlib.suppress(ValueError):
+            explicitly_allowed_ip = ipaddress.ip_address(normalized).is_global
+        for address in addresses:
+            ip = ipaddress.ip_address(address[4][0])
+            if (not ip.is_global or ip.is_reserved) and not explicitly_allowed_ip:
+                raise McpDestinationError("MCP host resolves to a private or reserved address")
+
+
+def _bounded_read(response: Any) -> bytes:
+    data = response.read(_MAX_REPLY + 1)
+    if len(data) > _MAX_REPLY:
+        raise McpReplyTooLarge(f"MCP reply exceeded {_MAX_REPLY} bytes")
+    return data
 
 
 class _NoRedirect(urllib.request.HTTPRedirectHandler):

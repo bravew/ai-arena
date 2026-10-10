@@ -203,6 +203,39 @@ def test_a_kit_changed_after_loading_is_not_installed(tmp_path: Path) -> None:
     assert box.files == {}
 
 
+def test_source_change_after_staging_fails_before_the_first_container_write(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    kit, root = _kit(tmp_path, "id: k\nversion: 1\ninstructions: i.md\n", {"i.md": "before"})
+    from arena.kits import install as installer
+    from arena.kits.hashing import hash_kit as compute_hash
+
+    def mutate_then_hash(current: Kit, kit_root: Path) -> str:
+        (kit_root / "i.md").write_text("after")
+        return compute_hash(current, kit_root)
+
+    monkeypatch.setattr(installer, "hash_kit", mutate_then_hash)
+    box = FakeBox()
+
+    with pytest.raises(KitInstallError, match="changed on disk"):
+        install_kit(box, kit, root, FULL, GATEWAY)
+    assert box.calls == 0
+
+
+def test_command_mcp_env_reference_in_command_is_refused(tmp_path: Path) -> None:
+    kit, root = _kit(
+        tmp_path,
+        "id: k\nversion: 1\nmcp: [{name: local, command: 'srv --token=${SECRET}'}]\n",
+        {},
+    )
+    target = KitTarget(agent_id="cli", mcp=_mcp_json)
+
+    result = install_kit(FakeBox(), kit, root, target, GATEWAY)
+
+    assert result.written == ()
+    assert any("command server cannot use ${ENV}" in refusal for refusal in result.refused)
+
+
 def test_a_file_that_differs_in_the_container_stops_the_trial(tmp_path: Path) -> None:
     kit, root = _kit(tmp_path, "id: k\nversion: 1\ninstructions: i.md\n", {"i.md": "one"})
 

@@ -2,15 +2,13 @@ from __future__ import annotations
 
 import asyncio
 import json
-import threading
 from collections.abc import AsyncIterator, Mapping
-from http.server import BaseHTTPRequestHandler, HTTPServer
-from typing import Any, ClassVar
+from typing import Any
 
 import pytest
 
 from arena.core.models import McpServer
-from arena.gateway.mcp_proxy import McpConfigError, McpProxy, McpSpan, UpstreamReply, UrllibUpstream
+from arena.gateway.mcp_proxy import McpConfigError, McpProxy, McpSpan, UpstreamReply
 
 CALL = json.dumps(
     {
@@ -32,10 +30,12 @@ ENV = {"DOCS_TOKEN": "fixture-daemon-header-28"}
 class FakeUpstream:
     def __init__(self, status: int = 200, body: bytes = OK, *, fail: bool = False) -> None:
         self.status, self.body, self.fail = status, body, fail
-        self.requests: list[tuple[str, bytes, dict[str, str]]] = []
+        self.requests: list[tuple[str, str, bytes, dict[str, str]]] = []
 
-    async def post(self, url: str, *, body: bytes, headers: Mapping[str, str]) -> UpstreamReply:
-        self.requests.append((url, body, dict(headers)))
+    async def request(
+        self, method: str, url: str, *, body: bytes | None, headers: Mapping[str, str]
+    ) -> UpstreamReply:
+        self.requests.append((method, url, body or b"", dict(headers)))
         if self.fail:
             raise ConnectionError("upstream unavailable")
 
@@ -53,13 +53,20 @@ async def _call(
     name: str = "docs",
     body: bytes = CALL,
     headers: Mapping[str, str] | None = None,
+    method: str = "POST",
 ) -> tuple[int, bytes, Mapping[str, str]]:
-    reply = await proxy.handle(name, body, headers or {}, trial_id="t1")
+    reply = await proxy.handle(name, method, body, headers or {}, trial_id="t1")
     return reply.status_code, b"".join([chunk async for chunk in reply.body]), reply.headers
 
 
 def _proxy(upstream: Any, spans: list[McpSpan], servers: list[McpServer] | None = None) -> McpProxy:
-    return McpProxy(servers or [DOCS], env=ENV, upstream=upstream, spans=spans.append)
+    return McpProxy(
+        servers or [DOCS],
+        env=ENV,
+        upstream=upstream,
+        spans=spans.append,
+        allowed_hosts=frozenset({"upstream.invalid"}),
+    )
 
 
 def test_upstream_gets_daemon_header_and_never_the_container_token() -> None:
@@ -77,8 +84,9 @@ def test_upstream_gets_daemon_header_and_never_the_container_token() -> None:
         )
     )
 
-    url, sent_body, sent = upstream.requests[0]
+    method, url, sent_body, sent = upstream.requests[0]
     assert (status, body) == (200, OK) and url == "https://upstream.invalid/mcp"
+    assert method == "POST"
     assert sent_body == CALL
     assert sent["authorization"] == f"Bearer {ENV['DOCS_TOKEN']}"
     assert "arena-trial-fixture" not in json.dumps(sent) and "cookie" not in sent
@@ -152,59 +160,118 @@ def test_command_servers_are_not_routed_and_unset_env_names_fail_preflight() -> 
     assert _proxy(FakeUpstream(), [], [command, DOCS]).names() == ("docs",)
 
     with pytest.raises(McpConfigError, match=r"\$\{DOCS_TOKEN\}"):
-        McpProxy([DOCS], env={}, upstream=FakeUpstream())
+        McpProxy(
+            [DOCS], env={}, upstream=FakeUpstream(), allowed_hosts=frozenset({"upstream.invalid"})
+        )
     with pytest.raises(McpConfigError, match="http"):
         McpProxy(
-            [McpServer(name="fixture", url="file:///etc/hosts")], env={}, upstream=FakeUpstream()
+            [McpServer(name="fixture", url="file:///etc/hosts")],
+            env={},
+            upstream=FakeUpstream(),
+            allowed_hosts=frozenset(),
+        )
+    duplicate = McpServer(name="docs", url="https://other.example/mcp")
+    with pytest.raises(McpConfigError, match="duplicate MCP server name"):
+        McpProxy(
+            [DOCS, duplicate],
+            env=ENV,
+            upstream=FakeUpstream(),
+            allowed_hosts=frozenset({"upstream.invalid", "other.example"}),
         )
 
 
-class _Recorder(BaseHTTPRequestHandler):
-    seen: ClassVar[list[dict[str, str]]] = []
+class _HttpResponse:
+    def __init__(self, status: int, headers: Mapping[str, str], body: bytes) -> None:
+        self.status = status
+        self.headers = dict(headers)
+        self.body = body
+        self.closed = False
 
-    def do_POST(self) -> None:
-        length = int(self.headers["Content-Length"])
-        body = self.rfile.read(length)
-        _Recorder.seen.append({key.lower(): value for key, value in self.headers.items()})
-        if self.path == "/redirect":
-            self.send_response(302)
-            self.send_header("Location", "http://127.0.0.1:1/elsewhere")
-            self.end_headers()
-            return
-        self.send_response(200)
-        self.send_header("Content-Type", "application/json")
-        self.end_headers()
-        self.wfile.write(body and OK)
+    def read(self, size: int = -1) -> bytes:
+        return self.body if size < 0 else self.body[:size]
 
-    def log_message(self, format: str, *args: Any) -> None:
-        del format, args
+    def close(self) -> None:
+        self.closed = True
 
 
-def test_real_http_upstream_receives_daemon_header_and_redirects_are_not_followed() -> None:
-    server = HTTPServer(("127.0.0.1", 0), _Recorder)
-    threading.Thread(target=server.serve_forever, daemon=True).start()
-    _Recorder.seen = []
-    base = f"http://127.0.0.1:{server.server_port}"
+class LocalHttpUpstream:
+    def __init__(self) -> None:
+        self.requests: list[tuple[str, str, bytes | None, dict[str, str]]] = []
+
+    async def request(
+        self, method: str, url: str, *, body: bytes | None, headers: Mapping[str, str]
+    ) -> UpstreamReply:
+        self.requests.append((method, url, body, dict(headers)))
+        if url.endswith("/redirect"):
+            status, response_headers, payload = 302, {"Location": "http://127.0.0.1:1/next"}, b""
+        elif method == "GET":
+            status, response_headers, payload = (
+                200,
+                {"content-type": "text/event-stream"},
+                b"event: ping\\ndata: {}\\n\\n",
+            )
+        elif method == "DELETE":
+            status, response_headers, payload = 200, {}, b""
+        else:
+            status, response_headers, payload = 200, {"content-type": "application/json"}, OK
+        response = _HttpResponse(status, response_headers, payload)
+
+        async def chunks() -> AsyncIterator[bytes]:
+            yield response.read()
+            response.close()
+
+        return UpstreamReply(status, response_headers, chunks())
+
+
+def test_http_transport_handles_auth_methods_and_redirect_responses() -> None:
     spans: list[McpSpan] = []
+    upstream = LocalHttpUpstream()
     proxy = McpProxy(
         [
-            McpServer(name="docs", url=f"{base}/mcp", headers={"Authorization": "Bearer ${T}"}),
             McpServer(
-                name="moved", url=f"{base}/redirect", headers={"Authorization": "Bearer ${T}"}
+                name="docs",
+                url="https://docs.example/mcp",
+                headers={"Authorization": "Bearer ${T}"},
+            ),
+            McpServer(
+                name="moved",
+                url="https://docs.example/redirect",
+                headers={"Authorization": "Bearer ${T}"},
             ),
         ],
         env={"T": "fixture-header-value"},
-        upstream=UrllibUpstream(timeout=5),
+        upstream=upstream,
         spans=spans.append,
+        allowed_hosts=frozenset({"docs.example"}),
     )
-    try:
-        ok = asyncio.run(_call(proxy, headers={"Authorization": "Bearer arena-trial-fixture"}))
-        moved = asyncio.run(_call(proxy, name="moved"))
-    finally:
-        server.shutdown()
+
+    ok = asyncio.run(
+        _call(
+            proxy,
+            headers={
+                "Authorization": "Bearer arena-trial-fixture",
+                "Mcp-Session-Id": "fixture-session",
+            },
+        )
+    )
+    moved = asyncio.run(_call(proxy, name="moved"))
+    event = asyncio.run(
+        _call(proxy, method="GET", body=b"", headers={"Mcp-Session-Id": "fixture-session"})
+    )
+    closed = asyncio.run(
+        _call(proxy, method="DELETE", body=b"", headers={"Mcp-Session-Id": "fixture-session"})
+    )
 
     assert ok[0] == 200 and ok[1] == OK
-    assert _Recorder.seen[0]["authorization"] == "Bearer fixture-header-value"
-    assert moved[0] == 302  # the redirect is returned, never followed with the daemon header
-    assert len(_Recorder.seen) == 2
-    assert [span.status for span in spans] == ["ok", "error"]
+    assert moved[0] == 302  # returned to caller, never followed with daemon auth
+    assert event[0] == 200 and event[2].get("content-type") == "text/event-stream"
+    assert closed[0] == 200
+    assert len(upstream.requests) == 4
+    assert upstream.requests[0][3]["authorization"] == "Bearer fixture-header-value"
+    assert upstream.requests[0][3]["mcp-session-id"] == "fixture-session"
+    assert all(
+        request[3].get("mcp-session-id") == "fixture-session"
+        for request in upstream.requests
+        if request[0] in {"GET", "DELETE"}
+    )
+    assert [span.status for span in spans] == ["ok", "error", "ok", "ok"]

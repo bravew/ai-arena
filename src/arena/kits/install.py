@@ -1,14 +1,14 @@
 """Install a kit into a trial container through the AgentBox (DEV_PLAN §6.4).
 
 An adapter describes where its agent reads instructions, skills, MCP servers and settings as a
-`KitTarget`; this module does the copying, the hash checks and the bookkeeping that every adapter
-needs. Nothing is written on the host, and nothing the agent cannot take is dropped silently: it
-is listed in `KitInstall.refused`.
+`KitTarget`; this module copies the files, checks their content identity, and records anything the
+agent refuses. Nothing is written on the host.
 """
 
 from __future__ import annotations
 
 import hashlib
+import os
 import re
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
@@ -59,7 +59,7 @@ class KitTarget:
 
 
 def env_references(kit: Kit) -> tuple[str, ...]:
-    """Names referenced by URL-server headers, which the daemon resolves."""
+    """Names referenced by URL-server headers, resolved on the daemon."""
     names = {
         name
         for server in kit.mcp
@@ -71,7 +71,7 @@ def env_references(kit: Kit) -> tuple[str, ...]:
 
 
 def preflight_kit(kit: Kit | None, env: Mapping[str, str]) -> None:
-    """Fail naming every unset variable, so a server never connects without its auth."""
+    """Fail naming every unset daemon-side variable before any trial starts."""
     if kit is None:
         return
     missing = [name for name in env_references(kit) if not env.get(name)]
@@ -87,11 +87,9 @@ def install_kit(
     target: KitTarget,
     gateway: GatewayEndpoint,
 ) -> KitInstall:
-    """Copy the kit into the container and check every file against its source bytes."""
+    """Stage files, verify staged kit identity, then copy and verify container bytes."""
     if kit is None or not _has_content(kit):
         return KitInstall(written=())
-    if hash_kit(kit, root) != kit.hash:
-        raise KitInstallError(f"kit {kit.id!r} changed on disk after it was loaded")
 
     files: dict[str, bytes] = {}
     refused: list[str] = []
@@ -102,7 +100,24 @@ def install_kit(
         files[path] = content.encode()
     _settings(kit, target, files, refused)
 
-    executable = {path for path in files if _is_executable(root, path, kit, target)}
+    # Check the manifest's complete identity after staging. A concurrent edit between the read
+    # and this hash fails before the first container write; compare copied source paths as well.
+    if hash_kit(kit, root) != kit.hash:
+        raise KitInstallError(f"kit {kit.id!r} changed on disk after it was loaded")
+    _verify_staged_source(kit, root, target, files)
+
+    executable: set[str] = set()
+    for skill in kit.skills:
+        if not skill.path or target.skills_dir is None:
+            continue
+        found = _skill_files(root, skill.path)
+        if isinstance(found, str):
+            continue
+        base = PurePosixPath(target.skills_dir) / Path(skill.path).name
+        for relative in found:
+            source = root / skill.path / relative
+            if os.access(source, os.X_OK):
+                executable.add(str(base / relative))
     for path, data in files.items():
         box.write_text(path, data.decode())
         if path in executable:
@@ -113,8 +128,28 @@ def install_kit(
     return KitInstall(written=tuple(files), refused=tuple(refused))
 
 
+def _verify_staged_source(
+    kit: Kit, root: Path, target: KitTarget, files: Mapping[str, bytes]
+) -> None:
+    expected: dict[str, bytes] = {}
+    if kit.instructions and target.instructions_path:
+        data = _read_text(root, kit.instructions)
+        if data is not None:
+            expected[target.instructions_path] = data
+    for skill in kit.skills:
+        if not skill.path or target.skills_dir is None:
+            continue
+        found = _skill_files(root, skill.path)
+        if not isinstance(found, str):
+            base = PurePosixPath(target.skills_dir) / Path(skill.path).name
+            expected.update({str(base / relative): data for relative, data in found.items()})
+    for path, data in expected.items():
+        if files.get(path) != data:
+            raise KitInstallError(f"kit source for {path} changed while it was staged")
+
+
 def kit_unapplied(kit: Kit | None, install: KitInstall) -> bool:
-    """True when the contestant has a kit and none of it reached the agent."""
+    """True when a non-empty kit contributed no files or MCP config to the agent."""
     return kit is not None and _has_content(kit) and not install.written
 
 
@@ -206,8 +241,6 @@ def _mcp_entries(
         if reason is not None:
             refused.append(f"mcp {server.name}: {reason}")
         elif server.url:
-            # The container reaches the server only through the gateway, with the trial token it
-            # already holds. The upstream URL and its auth headers stay on the daemon.
             entries.append(
                 McpEntry(
                     name=server.name,
@@ -231,10 +264,12 @@ def _mcp_refusal(server: McpServer, target: KitTarget) -> str | None:
         return None if target.accepts_url_mcp else f"{target.agent_id} takes no URL MCP servers"
     if not server.command:
         return "has neither a url nor a command"
+    if (server.command and _ENV_REFERENCE.search(server.command)) or any(
+        _ENV_REFERENCE.search(argument) for argument in server.args
+    ):
+        return "a command server cannot use ${ENV}: the value would enter the container"
     if not target.accepts_command_mcp:
         return f"{target.agent_id} takes no command MCP servers"
-    if any(_ENV_REFERENCE.search(argument) for argument in server.args):
-        return "a command server cannot use ${ENV}: the value would enter the container"
     return None
 
 
@@ -245,7 +280,6 @@ def _mcp_files(target: KitTarget, entries: Sequence[McpEntry]) -> Sequence[tuple
 
 
 def _settings(kit: Kit, target: KitTarget, files: dict[str, bytes], refused: list[str]) -> None:
-    # Settings keyed by other agents are not an error: one kit covers several agents.
     wanted = kit.settings.get(target.agent_id)
     if wanted is None:
         return
@@ -253,14 +287,3 @@ def _settings(kit: Kit, target: KitTarget, files: dict[str, bytes], refused: lis
         refused.append(f"settings: {target.agent_id} takes no settings")
         return
     files.update({path: content.encode() for path, content in target.settings(wanted)})
-
-
-def _is_executable(root: Path, container_path: str, kit: Kit, target: KitTarget) -> bool:
-    if target.skills_dir is None or not container_path.startswith(target.skills_dir + "/"):
-        return False
-    relative = PurePosixPath(container_path).relative_to(target.skills_dir)
-    for skill in kit.skills:
-        if skill.path and relative.parts[0] == Path(skill.path).name:
-            source = root / skill.path / PurePosixPath(*relative.parts[1:])
-            return source.is_file() and bool(source.stat().st_mode & 0o111)
-    return False
