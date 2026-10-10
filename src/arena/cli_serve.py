@@ -26,10 +26,25 @@ def serve_command(
             "--run-key", envvar="ARENA_RUN_KEY", help="Run key required for off-box binding."
         ),
     ] = None,
+    trusted_proxy: Annotated[
+        str | None,
+        typer.Option(
+            "--trusted-proxy",
+            envvar="ARENA_TRUSTED_PROXY",
+            help="Trusted proxy IP that terminates TLS for off-box access.",
+        ),
+    ] = None,
 ) -> None:
     """Serve the viewer API locally or with run-key protection remotely."""
     try:
-        serve(host, port, artifact_port, home, run_key or os.environ.get("ARENA_RUN_KEY"))
+        serve(
+            host,
+            port,
+            artifact_port,
+            home,
+            run_key or os.environ.get("ARENA_RUN_KEY"),
+            trusted_proxy or os.environ.get("ARENA_TRUSTED_PROXY"),
+        )
     except ValueError as error:
         typer.echo(str(error), err=True)
         raise typer.Exit(code=2) from error
