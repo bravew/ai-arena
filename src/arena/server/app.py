@@ -87,18 +87,7 @@ def create_server(
             self.send_bytes(status, json.dumps(value).encode(), headers=headers)
 
         def authenticated(self) -> bool:
-            if artifacts:
-                cookie = next(
-                    (
-                        part.strip().removeprefix("arena_session=")
-                        for part in self.headers.get("Cookie", "").split(";")
-                        if part.strip().startswith("arena_session=")
-                    ),
-                    "",
-                )
-                expected = hmac.new(secret, (run_key or "").encode(), hashlib.sha256).hexdigest()
-                return bool(cookie) and hmac.compare_digest(cookie, expected)
-            if not off_box:
+            if not off_box and not (artifacts and run_key):
                 return True
             cookie = next(
                 (

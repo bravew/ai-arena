@@ -148,6 +148,9 @@ def test_remote_artifact_requires_the_api_signed_session_cookie(tmp_path: Path) 
 
 
 def test_default_server_serves_api_and_artifacts_on_separate_origins(tmp_path: Path) -> None:
+    from arena.core.cas import ArtifactStore
+
+    digest = ArtifactStore(tmp_path / "artifacts").put(b"local artifact")
     app_server = create_server("127.0.0.1", 0, tmp_path)
     artifact_server = create_server("127.0.0.1", 0, tmp_path, artifacts=True)
     run(app_server)
@@ -158,6 +161,10 @@ def test_default_server_serves_api_and_artifacts_on_separate_origins(tmp_path: P
         assert status == 200
         assert json.loads(body) == {"status": "ok"}
         assert artifact_server.server_address[1] != port
+        artifact_port = artifact_server.server_address[1]
+        status, body, _ = request(f"http://127.0.0.1:{artifact_port}/artifacts/{digest}")
+        assert status == 200
+        assert body == b"local artifact"
     finally:
         app_server.shutdown()
         artifact_server.shutdown()
