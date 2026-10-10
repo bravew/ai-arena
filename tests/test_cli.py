@@ -16,7 +16,7 @@ def test_no_arguments_prints_help() -> None:
 
 
 def test_serve_command_is_registered() -> None:
-    result = CliRunner().invoke(app, ["serve", "--help"])
+    result = CliRunner().invoke(app, ["serve", "--help"], terminal_width=120)
     assert result.exit_code == 0
     assert "--artifact-port" in result.output
 
