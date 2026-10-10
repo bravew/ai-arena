@@ -4,6 +4,7 @@ from pathlib import Path
 from typing import Any
 
 import httpx
+import pytest
 from typer.testing import CliRunner
 
 from arena.cli import app
@@ -109,8 +110,9 @@ def test_gateway_command_factory_accepts_injected_runner() -> None:
 
 
 def test_gateway_command_builds_the_production_app_with_the_subscription_store(
-    tmp_path: Path,
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
     from arena.cli_gateway import build_gateway_app
 
     served: list[Any] = []
@@ -126,14 +128,16 @@ def test_gateway_command_builds_the_production_app_with_the_subscription_store(
 
     from starlette.testclient import TestClient
 
-    with TestClient(served[0]) as client:
+    with TestClient(served[0], raise_server_exceptions=False) as client:
         response = client.post(
             "/v1/chat/completions",
             headers={"Authorization": "Bearer arena-trial-24"},
             json={"model": "anthropic/claude-opus-5-5", "messages": []},
         )
-    # The production dispatcher is installed: no 501 "not implemented" from a bare app.
-    assert response.status_code != 501
+    # A bare app answers 501; the production dispatcher reaches credential resolution and
+    # fails closed without echoing anything secret.
+    assert response.status_code == 502
+    assert response.json()["error"]["type"] == "upstream_error"
 
 
 def test_providers_import_copies_sign_in_to_private_store(tmp_path: Path) -> None:
@@ -165,3 +169,16 @@ def test_providers_import_rejects_unknown_vendor_and_bad_sign_in(tmp_path: Path)
     assert unknown.exit_code == 2
     assert broken.exit_code == 1
     assert not (tmp_path / "subscriptions" / "claude.json").exists()
+
+
+def test_providers_import_reports_unwritable_store_without_a_traceback(tmp_path: Path) -> None:
+    source = Path(__file__).parents[2] / "fixtures" / "subscriptions" / "claude.synthetic.json"
+    blocker = tmp_path / "home"
+    blocker.write_text("not a directory", encoding="utf-8")
+
+    result = CliRunner().invoke(
+        app, ["providers", "import", "claude", "--from", str(source), "--home", str(blocker)]
+    )
+
+    assert result.exit_code == 1
+    assert not isinstance(result.exception, OSError)

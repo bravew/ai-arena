@@ -157,8 +157,8 @@ def _subscription_store(home: Path | None) -> SubscriptionStore:
     return SubscriptionStore((home or Path.home() / ".arena") / "subscriptions")
 
 
-@app.command("import")
-def import_subscription_command(
+@providers_app.command("import")
+def providers_import(
     vendor: Annotated[str, typer.Argument()],
     sign_in: Annotated[
         Path, typer.Option("--from", exists=True, dir_okay=False, help="Native CLI sign-in file.")
@@ -171,22 +171,10 @@ def import_subscription_command(
         raise typer.Exit(code=2)
     try:
         account = import_subscription(vendor, sign_in, _subscription_store(home))
-    except SubscriptionError as error:
+    except (SubscriptionError, OSError) as error:
         typer.echo(f"error: {error}", err=True)
         raise typer.Exit(code=1) from error
     typer.echo(f"imported {account.display_name}; the source sign-in was not modified")
-
-
-@providers_app.command("import")
-def providers_import(
-    vendor: Annotated[str, typer.Argument()],
-    sign_in: Annotated[
-        Path, typer.Option("--from", exists=True, dir_okay=False, help="Native CLI sign-in file.")
-    ],
-    home: Annotated[Path | None, typer.Option("--home")] = None,
-) -> None:
-    """Import a subscription account (alias of `arena import`)."""
-    import_subscription_command(vendor, sign_in, home)
 
 
 def create_doctor_command() -> Callable[..., None]:
