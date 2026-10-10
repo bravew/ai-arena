@@ -10,6 +10,9 @@ from typing import Protocol
 from urllib.parse import urlsplit
 
 _TRIAL_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$")
+# Writable home for adapter config in an otherwise read-only container; gone with the container.
+_AGENT_HOME = "/home/agent:rw,nosuid,size=64m"
+_IDLE = ("sleep", "infinity")
 
 
 class SandboxError(RuntimeError):
@@ -109,7 +112,31 @@ class DockerSandbox:
     async def run(
         self, spec: SandboxSpec, limits: SandboxLimits | None = None
     ) -> AsyncGenerator[SandboxContainer, None]:
-        limits = limits or SandboxLimits()
+        """Start the container with `spec.command` as its main process."""
+        async with self._open(spec, limits or SandboxLimits(), spec.command, idle=False) as box:
+            yield box
+
+    @asynccontextmanager
+    async def start(
+        self, spec: SandboxSpec, limits: SandboxLimits | None = None
+    ) -> AsyncGenerator[SandboxContainer, None]:
+        """Start an idle container so an adapter can wire it and then `docker exec` into it.
+
+        The agent command is not the container's main process here; the runner executes it after
+        the adapter has written its config, so a wiring failure never starts the agent.
+        """
+        async with self._open(spec, limits or SandboxLimits(), _IDLE, idle=True) as box:
+            yield box
+
+    @asynccontextmanager
+    async def _open(
+        self,
+        spec: SandboxSpec,
+        limits: SandboxLimits,
+        command: Sequence[str],
+        *,
+        idle: bool,
+    ) -> AsyncGenerator[SandboxContainer, None]:
         name = f"arena-{spec.trial_id}"
         network = name
         network_id: str | None = None
@@ -140,8 +167,9 @@ class DockerSandbox:
                 "--read-only",
                 "--tmpfs",
                 "/tmp:rw,noexec,nosuid,size=64m",
+                *(("--tmpfs", _AGENT_HOME) if idle else ()),
                 "--mount",
-                f"type=bind,src={spec.workspace.resolve()},dst=/workspace,rw",
+                f"type=bind,src={spec.workspace.resolve()},dst=/workspace",
                 "--workdir",
                 "/workspace",
                 "--env",
@@ -150,8 +178,9 @@ class DockerSandbox:
                 f"ARENA_GATEWAY_TOKEN={spec.gateway_token}",
                 "--env",
                 "NO_PROXY=*",
+                *(("--entrypoint", command[0]) if idle else ()),
                 spec.image,
-                *spec.command,
+                *(command[1:] if idle else command),
             ]
             container_id = await self._docker.run(*args)
             timeout_scope = asyncio.timeout(limits.timeout_seconds)
