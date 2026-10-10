@@ -22,6 +22,7 @@ from datetime import UTC, datetime
 from typing import Any, Protocol, cast
 
 import anyio
+import httpx
 import zstandard
 from starlette.applications import Starlette
 from starlette.datastructures import Headers
@@ -31,19 +32,22 @@ from starlette.responses import JSONResponse, Response, StreamingResponse
 from starlette.routing import Route
 
 from arena.catalog.config import ModelCatalog
-from arena.core.models import Call, RunEvent, Tokens
+from arena.core.models import Call, RunEvent, Tokens, Try
 from arena.gateway.auth import Caller, Purpose, authenticate
 from arena.gateway.budget import Budget, BudgetExceeded
+from arena.gateway.classify import FailureClass, classify_failure
 from arena.gateway.lanes import KeyLane, LanePermit, LanePool, LanePoolFull, LaneRejected
+from arena.gateway.plan import Candidate, plan_candidates
 from arena.gateway.redact import RedactingFilter, scrub_headers, scrub_json
 from arena.gateway.relay import PreparedRelay, RelayRequest, prepare_relay
 from arena.gateway.resolve import ResolveError, Target, listed_models, resolve_target
+from arena.gateway.rests import RestBook
 from arena.gateway.status import LaneSnapshot, status_routes
 from arena.gateway.translate import ProtocolTranslator, StructuredOutputMapper, TranslationError
 from arena.obs.events import EventLog
 from arena.obs.metrics import Metrics
 from arena.obs.otel import OtlpExporter
-from arena.providers.config import ProviderConfig
+from arena.providers.config import ProviderConfig, ProviderKey
 
 DEFAULT_MAX_BODY_BYTES = 10 * 1024 * 1024
 DEFAULT_MAX_ENCODED_BYTES = 10 * 1024 * 1024
@@ -92,6 +96,7 @@ class DispatchContext:
     source_protocol: str
     target_protocol: str
     streaming: bool
+    candidate: ProviderKey | None = None
 
 
 Dispatcher = Callable[[DispatchContext], Awaitable[UpstreamResponse]]
@@ -127,6 +132,7 @@ class GatewayState:
         metrics: Metrics | None = None,
         exporter: OtlpExporter | None = None,
         effort_mapping: Mapping[str, Mapping[str, Any]] | None = None,
+        rests: RestBook | None = None,
     ) -> None:
         if max_body_bytes < 1 or max_encoded_bytes < 1:
             raise ValueError("body limits must be positive")
@@ -150,6 +156,7 @@ class GatewayState:
         self.metrics = metrics or Metrics()
         self.exporter = exporter
         self.effort_mapping = effort_mapping
+        self.rests = rests or RestBook()
         self.sequence = 0
         self.sequence_lock = asyncio.Lock()
 
@@ -228,6 +235,7 @@ def create_app(
     metrics: Metrics | None = None,
     exporter: OtlpExporter | None = None,
     effort_mapping: Mapping[str, Mapping[str, Any]] | None = None,
+    rests: RestBook | None = None,
 ) -> Starlette:
     """Create a gateway app with validated provider and catalog configuration."""
     state = GatewayState(
@@ -246,6 +254,7 @@ def create_app(
         metrics=metrics,
         exporter=exporter,
         effort_mapping=effort_mapping,
+        rests=rests,
     )
 
     @asynccontextmanager
@@ -395,6 +404,11 @@ async def _protocol(request: Request) -> Response:
                 "budget_context_unavailable",
                 "budget service requires a run event log",
             )
+        try:
+            candidates = _plan_candidates(state, target)
+        except _UnsupportedKeyRouting as exc:
+            result_status = 503
+            return _error(result_status, "key_routing_unsupported", str(exc))
         seq = context.seq if context is not None else await state.next_sequence()
         run_id = (
             context.run_id if context is not None else (caller.run_id or f"trial-{caller.trial_id}")
@@ -423,35 +437,6 @@ async def _protocol(request: Request) -> Response:
                 return
             with suppress(asyncio.QueueFull):
                 keepalive_chunks.put_nowait(b": keep-alive\n\n")
-
-        lane_key = f"{target.provider.id}/main"
-        try:
-            lane = state.lanes.for_key(lane_key)
-            state.known_lanes[lane_key] = lane
-        except LaneRejected as exc:
-            result_status = 429
-            return JSONResponse(
-                {"error": {"type": "lane_rejected", "message": str(exc)}},
-                status_code=429,
-                headers=exc.headers,
-            )
-        except LanePoolFull:
-            result_status = 503
-            return _error(
-                result_status,
-                "lane_pool_full",
-                "gateway lane pool is full; retry after capacity is freed",
-            )
-
-        try:
-            permit = await lane.acquire(streaming=streaming, keepalive=keepalive)
-        except LaneRejected as exc:
-            result_status = 429
-            return JSONResponse(
-                {"error": {"type": "lane_rejected", "message": str(exc)}},
-                status_code=429,
-                headers=exc.headers,
-            )
 
         if state.budget is not None and reservation is None:
             result_status = 503
@@ -488,21 +473,101 @@ async def _protocol(request: Request) -> Response:
             result_status = 400
             return _error(result_status, "translation_error", str(exc))
 
-        queue_ms = permit.queue_ms
+        # One attempt per candidate key, same model only. A retry happens only before any byte
+        # has reached the caller: failed attempts are read and discarded here.
+        remaining = list(candidates)
+        tries: list[Try] = []
+        queue_ms = 0
+        last_failure: FailureClass | None = None
+        error_body = b""
+        upstream: UpstreamResponse | None = None
+        while remaining:
+            candidate = remaining.pop(0)
+            retrying = upstream is not None or bool(tries)
+            try:
+                lane = state.lanes.for_key(candidate.lane_key)
+                state.known_lanes[candidate.lane_key] = lane
+                permit = await lane.acquire(streaming=streaming, keepalive=keepalive)
+            except (LaneRejected, LanePoolFull) as exc:
+                if retrying and (remaining or upstream is not None):
+                    continue
+                if retrying:
+                    # Earlier keys failed before any reply; the caller gets that failure, not a
+                    # lane error about a key they never chose.
+                    raise RuntimeError(
+                        "no key was left to answer after an upstream failure"
+                    ) from exc
+                if isinstance(exc, LanePoolFull):
+                    result_status = 503
+                    return _error(
+                        result_status,
+                        "lane_pool_full",
+                        "gateway lane pool is full; retry after capacity is freed",
+                    )
+                result_status = 429
+                return JSONResponse(
+                    {"error": {"type": "lane_rejected", "message": str(exc)}},
+                    status_code=429,
+                    headers=exc.headers,
+                )
+            queue_ms += permit.queue_ms
+            attempt_started = time.monotonic()
+            dispatch_context = DispatchContext(
+                target=target,
+                prepared=prepared,
+                source_protocol=source_protocol,
+                target_protocol=target_protocol,
+                streaming=streaming,
+                candidate=candidate.provider_key,
+            )
+            try:
+                upstream = await state.dispatcher(dispatch_context)
+            except Exception as exc:
+                failure = _transport_failure(exc)
+                if failure is not None:
+                    state.rests.rest(candidate.lane_key, failure)
+                if failure is None or not remaining:
+                    raise
+                logger.warning("upstream attempt failed before a response; trying the next key")
+                tries.append(_try(candidate, None, failure, attempt_started))
+                last_failure = failure
+                upstream = None
+                await lane.release()
+                permit = None
+                continue
+            status_code = upstream.status_code
+            if status_code == 429:
+                await lane.report_rate_limit()
+            elif 200 <= status_code < 300:
+                await lane.report_success()
+            if status_code < 400:
+                state.rests.clear(candidate.lane_key)
+                tries.append(_try(candidate, status_code, None, attempt_started))
+                last_failure = None
+                break
+            error_body = await _read_error_body(upstream.body)
+            failure = classify_failure(status_code, error_body)
+            rest_ms = 0
+            if failure is not None and failure is not FailureClass.CONTENT_REFUSAL:
+                rest_key = (
+                    f"{candidate.lane_key}:{candidate.model}"
+                    if failure is FailureClass.MODEL_REFUSED
+                    else candidate.lane_key
+                )
+                rest = state.rests.rest(rest_key, failure, upstream.headers.get("retry-after"))
+                if rest is not None:
+                    rest_ms = max(0, round((rest.until - datetime.now(UTC)).total_seconds() * 1000))
+            tries.append(_try(candidate, status_code, failure, attempt_started, rest_ms))
+            last_failure = failure
+            if failure not in _NEXT_KEY_FAILURES or not remaining:
+                break
+            await lane.release()
+            permit = None
+        if upstream is None:
+            raise RuntimeError("no upstream attempt produced a response")
+
         if context is not None:
             call = _build_call(request, target, caller, context, seq, run_id, cost_usd, queue_ms)
-        dispatch_context = DispatchContext(
-            target=target,
-            prepared=prepared,
-            source_protocol=source_protocol,
-            target_protocol=target_protocol,
-            streaming=streaming,
-        )
-        upstream = await state.dispatcher(dispatch_context)
-        if upstream.status_code == 429:
-            await lane.report_rate_limit()
-        elif 200 <= upstream.status_code < 300:
-            await lane.report_success()
 
         finalized = False
 
@@ -517,6 +582,8 @@ async def _protocol(request: Request) -> Response:
                         "status": status_code,
                         "tokens": tokens or Tokens(),
                         "queue_ms": queue_ms,
+                        "tries": tries,
+                        "error_class": last_failure if status_code >= 400 else None,
                         "total_ms": max(0, round((time.monotonic() - started) * 1000)),
                         "translated": prepared.translated,
                         "effort_applied": prepared.effort_applied,
@@ -564,8 +631,6 @@ async def _protocol(request: Request) -> Response:
 
         if upstream.status_code >= 400:
             if upstream.status_code == 429:
-                async for _ in upstream.body:
-                    pass
                 await finalize(upstream.status_code, upstream.tokens)
                 result_status = upstream.status_code
                 return JSONResponse(
@@ -582,8 +647,6 @@ async def _protocol(request: Request) -> Response:
                         if key.lower() in {"retry-after"}
                     },
                 )
-            async for _ in upstream.body:
-                pass
             await finalize(upstream.status_code, upstream.tokens)
             result_status = upstream.status_code
             return _error(
@@ -687,6 +750,95 @@ async def _protocol(request: Request) -> Response:
                 await asyncio.shield(reservation.release())
                 reservation = None
             record_metrics(result_status)
+
+
+# Classes that move on to the next key of the same provider and model (DEV_PLAN §5.5). The
+# others are answered as they are: auth and subscription limits are not fixed by another key.
+_NEXT_KEY_FAILURES = frozenset(
+    {
+        FailureClass.RATE_LIMIT,
+        FailureClass.QUOTA,
+        FailureClass.CREDIT,
+        FailureClass.MODEL_REFUSED,
+        FailureClass.BAD_REPLY,
+        FailureClass.UPSTREAM,
+        FailureClass.TIMEOUT,
+    }
+)
+_MAX_ERROR_BODY = 64 * 1024
+
+
+class _UnsupportedKeyRouting(Exception):
+    """The provider asks for a key routing the gateway does not implement."""
+
+
+@dataclass(frozen=True, slots=True)
+class _Candidate(Candidate):
+    lane_key: str = ""
+    provider_key: ProviderKey | None = None
+
+
+def _plan_candidates(state: GatewayState, target: Target) -> tuple[_Candidate, ...]:
+    """The provider's keys in `key_routing` order, resting keys last, for this model only."""
+    provider = target.provider
+    routing = (provider.model_extra or {}).get("key_routing", "order")
+    if routing != "order":
+        raise _UnsupportedKeyRouting(
+            f"key_routing {routing!r} of provider {provider.id!r} is not implemented; use 'order'"
+        )
+    model = target.catalog_ref
+    keyed: list[tuple[str, ProviderKey | None]] = (
+        [(f"{provider.id}/{key.id}", key) for key in provider.keys]
+        if provider.keys
+        else [(f"{provider.id}/main", None)]
+    )
+    return plan_candidates(
+        tuple(
+            _Candidate(
+                key=lane_key,
+                model=model,
+                resting=state.rests.is_resting(lane_key)
+                or state.rests.is_resting(f"{lane_key}:{model}"),
+                lane_key=lane_key,
+                provider_key=key,
+            )
+            for lane_key, key in keyed
+        ),
+        model,
+    )
+
+
+def _try(
+    candidate: _Candidate,
+    status: int | None,
+    failure: FailureClass | None,
+    started: float,
+    rest_ms: int = 0,
+) -> Try:
+    return Try(
+        account_id=candidate.lane_key.split("/", 1)[1],
+        status=status,
+        error_class=failure.value if failure is not None else None,
+        rest_ms=rest_ms,
+        ms=max(0, round((time.monotonic() - started) * 1000)),
+    )
+
+
+def _transport_failure(error: Exception) -> FailureClass | None:
+    if isinstance(error, httpx.TimeoutException | TimeoutError):
+        return FailureClass.TIMEOUT
+    if isinstance(error, httpx.TransportError | ConnectionError):
+        return FailureClass.UPSTREAM
+    return None
+
+
+async def _read_error_body(body: AsyncIterator[bytes]) -> bytes:
+    """Read an error reply for classification, keeping a bounded prefix."""
+    kept = bytearray()
+    async for chunk in body:
+        if len(kept) < _MAX_ERROR_BODY:
+            kept.extend(chunk[: _MAX_ERROR_BODY - len(kept)])
+    return bytes(kept)
 
 
 async def _next_stream_chunk(stream: AsyncIterator[bytes]) -> bytes | None:
