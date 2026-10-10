@@ -38,6 +38,7 @@ def create_server(
     run_key: str | None = None,
     artifacts: bool = False,
     trusted_proxy: str | None = None,
+    session_secret: bytes | None = None,
 ) -> ArenaHTTPServer:
     """Create a server instance; ``serve_forever`` starts it for real."""
     data_home = home or default_home()
@@ -51,7 +52,7 @@ def create_server(
             trusted_proxy = str(ipaddress.ip_address(trusted_proxy))
         except ValueError as error:
             raise ValueError("trusted proxy must be an IP address") from error
-    secret = secrets.token_bytes(32)
+    secret = session_secret or secrets.token_bytes(32)
     routes: list[tuple[str, str, Callable[..., None]]] = []
 
     def route(method: str, path: str, callback: Callable[..., None]) -> None:
@@ -86,6 +87,17 @@ def create_server(
             self.send_bytes(status, json.dumps(value).encode(), headers=headers)
 
         def authenticated(self) -> bool:
+            if artifacts:
+                cookie = next(
+                    (
+                        part.strip().removeprefix("arena_session=")
+                        for part in self.headers.get("Cookie", "").split(";")
+                        if part.strip().startswith("arena_session=")
+                    ),
+                    "",
+                )
+                expected = hmac.new(secret, (run_key or "").encode(), hashlib.sha256).hexdigest()
+                return bool(cookie) and hmac.compare_digest(cookie, expected)
             if not off_box:
                 return True
             cookie = next(
@@ -111,10 +123,13 @@ def create_server(
         def do_GET(self) -> None:
             parsed = urlsplit(self.path)
             path = unquote(parsed.path)
+            if artifacts and path == "/auth/sign-in":
+                self.send_json(404, {"error": "not found"})
+                return
             if path == "/auth/sign-in":
                 self.send_json(405, {"error": "use POST to sign in"}, {"Allow": "POST"})
                 return
-            if off_box and not self.authenticated():
+            if not self.authenticated():
                 self.send_json(401, {"error": "sign in required"}, {"WWW-Authenticate": "Arena"})
                 return
             if artifacts:
@@ -151,6 +166,9 @@ def create_server(
             parsed = urlsplit(self.path)
             path = unquote(parsed.path)
             if path == "/auth/sign-in":
+                if artifacts:
+                    self.send_json(404, {"error": "not found"})
+                    return
                 if self.headers.get("Origin"):
                     self.send_json(403, {"error": "cross-origin sign-in is refused"})
                     return
@@ -213,16 +231,53 @@ def create_server(
                     return
                 try:
                     from arena.core.cas import ArtifactStore
+                    from arena.core.store import Store
 
                     payload = ArtifactStore(data_home / "artifacts").get(digest)
+                    mime = "application/octet-stream"
+                    db = data_home / "arena.db"
+                    if db.is_file():
+                        with Store(db) as store:
+                            row = store.execute(
+                                "SELECT mime FROM trial_artifacts WHERE sha256 = ? LIMIT 1",
+                                (digest,),
+                            ).fetchone()
+                        if row is not None:
+                            candidate = str(row["mime"])
+                            if candidate in {
+                                "image/png",
+                                "image/jpeg",
+                                "image/gif",
+                                "image/webp",
+                                "image/svg+xml",
+                                "audio/mpeg",
+                                "audio/ogg",
+                                "audio/wav",
+                                "video/mp4",
+                                "video/webm",
+                                "text/plain",
+                                "text/markdown",
+                                "text/css",
+                                "text/html",
+                                "application/pdf",
+                            }:
+                                mime = candidate
                 except (OSError, ValueError):
                     self.send_json(404, {"error": "not found"})
                     return
                 self.send_bytes(
                     200,
                     payload,
-                    "application/octet-stream",
-                    {"Content-Security-Policy": "default-src 'none'; sandbox"},
+                    mime,
+                    {
+                        "Content-Security-Policy": (
+                            "default-src 'none'; sandbox; style-src 'unsafe-inline'; "
+                            "img-src data:; media-src data:; frame-ancestors 'none'; "
+                            "form-action 'none'"
+                        ),
+                        "Cross-Origin-Resource-Policy": "cross-origin",
+                        "X-Frame-Options": "DENY",
+                    },
                 )
                 return
             self.send_json(404, {"error": "not found"})
@@ -303,10 +358,23 @@ def serve(
     trusted_proxy: str | None = None,
 ) -> None:
     """Run viewer/API and artifact servers on separate ports."""
-    api = create_server(host, port, home, run_key=run_key, trusted_proxy=trusted_proxy)
-    artifact_host = "127.0.0.1" if host not in {"127.0.0.1", "localhost", "::1"} else host
+    session_secret = secrets.token_bytes(32)
+    api = create_server(
+        host,
+        port,
+        home,
+        run_key=run_key,
+        trusted_proxy=trusted_proxy,
+        session_secret=session_secret,
+    )
     artifact_server = create_server(
-        artifact_host, artifact_port, home, run_key=run_key, artifacts=True
+        host,
+        artifact_port,
+        home,
+        run_key=run_key,
+        artifacts=True,
+        trusted_proxy=trusted_proxy,
+        session_secret=session_secret,
     )
     artifact_thread = threading.Thread(target=artifact_server.serve_forever, daemon=True)
     artifact_thread.start()
