@@ -13,7 +13,7 @@
 ## Runtime path
 
 1. The caller supplies an adapter, task, settings, sandbox box, gateway observer, gateway endpoint, model and trial token.
-2. `AgentRunner.run` reads the installed CLI version, wires gateway URL/token and model, installs an optional kit, and starts the adapter command.
+2. `AgentRunner.run` reads the installed CLI version, wires gateway URL/token and model, installs an optional kit, and starts the adapter command. The returned `AgentRunResult.kit_install` retains written paths and refusal reasons. An install with refusals and no written paths sets `TrialFlags.kit_unapplied`; partial and empty installs do not.
 3. The runner waits up to `first_step_timeout` for a call bearing the trial token and adapter protocol.
 4. With a reached call, the runner collects gateway calls and any native transcript, and returns `reached` with metered flags.
 5. Without a reached call, the runner calls `check()`. A failed check returns `errored` with `wiring`; a successful check returns `unmetered` for transcript-only reporting.
@@ -23,7 +23,7 @@
 
 - Adapter operations receive only the supplied `AgentBox`; adapters must write configuration inside the container and must not access the user's host configuration.
 - Exceptions during version detection, wiring, kit installation, command creation, or transcript handling return `errored` with `error_class="wiring"`.
-- A missing trial-token call is never treated as a task failure. A successful wiring check marks the result unmetered; a failed check marks it errored.
+- A missing trial-token call is never treated as a task failure. A successful wiring check marks the result unmetered; a failed check marks it errored. Both outcomes and errors after installation preserve the kit result and `kit_unapplied` flag; an exception before installation completes leaves the kit result unknown (`None`).
 - The contract harness uses a deterministic mock provider and asserts the first request's token and protocol. Its local contract tests do not require Docker or a real provider.
 - `AgentRunner` consumes a `ReachedGateway` observer and `AgentBox` operations. The Docker lifecycle adapter and live gateway query implementation are supplied by the caller.
 - Calls are linked only when `Call.trial_id` matches the requested trial. A transcript turn without a linked call is explicitly `unmetered`; malformed JSONL preserves any complete records and produces `status="partial"`. A malformed first record can still be represented by gateway calls as a partial session.
@@ -32,5 +32,5 @@
 ## Verification
 
 ```sh
-uv run pytest tests/agents/test_contract_harness.py
+uv run pytest tests/agents/test_contract_harness.py tests/agents/test_kit_result.py
 ```
