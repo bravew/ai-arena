@@ -119,11 +119,12 @@ class ClaudeCodeAdapter:
             else ""
         )
         return [
-            "sh", "-lc",
+            "sh",
+            "-lc",
             f"export HOME={quote(HOME)}; "
             f"prompt=$(cat {prompt_path}) || exit $?; "
             f"env {env_assignments} claude --print --output-format stream-json --verbose"
-            f"{model_arg}{system_arg} \"$prompt\"; "
+            f'{model_arg}{system_arg} "$prompt"; '
             "status=$?; "
             f"find {cwd_path} -name '*.jsonl' -type f -print0 2>/dev/null "
             f"| xargs -0 -r cat > {transcript_path}; "
@@ -172,12 +173,14 @@ class ClaudeCodeAdapter:
                         continue
                     name = str(block.get("name", "unknown"))
                     args = _mapping(block.get("input"))
-                    tools.append(ToolCall(
-                        name=name,
-                        args_digest=hashlib.sha256(
-                            json.dumps(args, sort_keys=True, separators=(",", ":")).encode()
-                        ).hexdigest(),
-                    ))
+                    tools.append(
+                        ToolCall(
+                            name=name,
+                            args_digest=hashlib.sha256(
+                                json.dumps(args, sort_keys=True, separators=(",", ":")).encode()
+                            ).hexdigest(),
+                        )
+                    )
                     if name == "Skill":
                         skill = args.get("skill")
                         if isinstance(skill, str):
@@ -200,14 +203,16 @@ class ClaudeCodeAdapter:
                     tools, skills = [], []
         if tools or skills or not turns:
             turns.append(Turn(tool_calls=tools, skill_events=skills))
-        return [Session(
-            id=session_id,
-            trial_id="",
-            agent=self.id,
-            native_session_id=session_id,
-            status="partial" if partial else "complete",
-            turns=turns,
-        )]
+        return [
+            Session(
+                id=session_id,
+                trial_id="",
+                agent=self.id,
+                native_session_id=session_id,
+                status="partial" if partial else "complete",
+                turns=turns,
+            )
+        ]
 
     def check(self, box: AgentBox) -> WiringCheck:
         try:

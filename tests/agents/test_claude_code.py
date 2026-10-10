@@ -85,21 +85,27 @@ def test_subscription_wiring_writes_only_gateway_url_and_token() -> None:
         "ANTHROPIC_AUTH_TOKEN": "arena-subscription-trial",
     }
     assert adapter.check(box).ok
-    assert "--model" not in " ".join(adapter.command(
-        Task(id="task", version=1, kind="agentic-code", prompt_file="/workspace/prompt.txt"), {}
-    ))
+    assert "--model" not in " ".join(
+        adapter.command(
+            Task(id="task", version=1, kind="agentic-code", prompt_file="/workspace/prompt.txt"), {}
+        )
+    )
 
 
 def test_installs_kit_inside_box_and_routes_mcp_through_gateway(tmp_path: Path) -> None:
     from arena.kits.hashing import hash_kit
 
-    kit = _kit(tmp_path).model_copy(update={
-        "mcp": [McpServer(
-            name="docs",
-            url="https://mcp.example.test/sse",
-            headers={"Authorization": "Bearer ${DOCS_TOKEN}"},
-        )]
-    })
+    kit = _kit(tmp_path).model_copy(
+        update={
+            "mcp": [
+                McpServer(
+                    name="docs",
+                    url="https://mcp.example.test/sse",
+                    headers={"Authorization": "Bearer ${DOCS_TOKEN}"},
+                )
+            ]
+        }
+    )
     kit = kit.model_copy(update={"hash": hash_kit(kit, tmp_path)})
     box = Box()
     adapter = ClaudeCodeAdapter(tmp_path)
@@ -132,16 +138,12 @@ def test_parses_skill_tool_events_and_marks_truncated_transcript_partial() -> No
                     {
                         "type": "tool_use",
                         "name": "Glob",
-                        "input": {
-                            "pattern": "/home/agent/.claude/skills/review/SKILL.md"
-                        },
+                        "input": {"pattern": "/home/agent/.claude/skills/review/SKILL.md"},
                     },
                     {
                         "type": "tool_use",
                         "name": "Read",
-                        "input": {
-                            "file_path": "/home/agent/.claude/skills/review/SKILL.md"
-                        },
+                        "input": {"file_path": "/home/agent/.claude/skills/review/SKILL.md"},
                     },
                     {"type": "tool_use", "name": "Skill", "input": {"skill": "review"}},
                 ]
@@ -156,7 +158,9 @@ def test_parses_skill_tool_events_and_marks_truncated_transcript_partial() -> No
 
     assert complete.native_session_id == "session-synthetic"
     assert [event.kind for event in complete.turns[0].skill_events] == [
-        "listed", "loaded", "invoked"
+        "listed",
+        "loaded",
+        "invoked",
     ]
     assert complete.status == "complete"
     assert partial.status == "partial"
