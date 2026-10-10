@@ -19,6 +19,7 @@ Pages are added with the code they describe; see
 | [`stats.md`](stats.md) | Aggregation, bootstrap, ratings, Pareto, run-diff |
 | [`observability.md`](observability.md) | Calls ledger, event stream, spans, metrics |
 | [`viewer-live.md`](viewer-live.md) | The viewer and the Live stage |
+| [`importers.md`](importers.md) | Inspect, Harbor, and promptfoo result import and bundle export |
 
 ## Page template
 
