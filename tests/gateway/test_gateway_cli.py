@@ -106,3 +106,62 @@ def test_gateway_command_factory_accepts_injected_runner() -> None:
     result = CliRunner().invoke(cli_app, ["--host", "127.0.0.1", "--port", "8088"])
     assert result.exit_code == 0, result.output
     assert called == [("127.0.0.1", 8088)]
+
+
+def test_gateway_command_builds_the_production_app_with_the_subscription_store(
+    tmp_path: Path,
+) -> None:
+    from arena.cli_gateway import build_gateway_app
+
+    served: list[Any] = []
+
+    def serve(app: Any, host: str, port: int) -> None:
+        served.append(app)
+
+    config = Path(__file__).parents[2] / "providers.yaml"
+    catalog = Path(__file__).parents[2] / "catalog" / "models.yaml"
+    cli_app = build_gateway_app(serve=serve, config=config, catalog=catalog)
+    result = CliRunner().invoke(cli_app, ["--home", str(tmp_path)])
+    assert result.exit_code == 0, result.output
+
+    from starlette.testclient import TestClient
+
+    with TestClient(served[0]) as client:
+        response = client.post(
+            "/v1/chat/completions",
+            headers={"Authorization": "Bearer arena-trial-24"},
+            json={"model": "anthropic/claude-opus-5-5", "messages": []},
+        )
+    # The production dispatcher is installed: no 501 "not implemented" from a bare app.
+    assert response.status_code != 501
+
+
+def test_providers_import_copies_sign_in_to_private_store(tmp_path: Path) -> None:
+    source = Path(__file__).parents[2] / "fixtures" / "subscriptions" / "claude.synthetic.json"
+    before = source.read_bytes()
+
+    result = CliRunner().invoke(
+        app, ["providers", "import", "claude", "--from", str(source), "--home", str(tmp_path)]
+    )
+
+    assert result.exit_code == 0, result.output
+    saved = tmp_path / "subscriptions" / "claude.json"
+    assert saved.stat().st_mode & 0o777 == 0o600
+    assert source.read_bytes() == before
+    assert "synthetic-claude-access" not in result.output
+
+
+def test_providers_import_rejects_unknown_vendor_and_bad_sign_in(tmp_path: Path) -> None:
+    bad = tmp_path / "bad.json"
+    bad.write_text("{}", encoding="utf-8")
+
+    unknown = CliRunner().invoke(
+        app, ["providers", "import", "nope", "--from", str(bad), "--home", str(tmp_path)]
+    )
+    broken = CliRunner().invoke(
+        app, ["providers", "import", "claude", "--from", str(bad), "--home", str(tmp_path)]
+    )
+
+    assert unknown.exit_code == 2
+    assert broken.exit_code == 1
+    assert not (tmp_path / "subscriptions" / "claude.json").exists()

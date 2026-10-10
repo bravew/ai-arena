@@ -16,8 +16,15 @@ import uvicorn
 
 from arena.catalog.config import load_catalog
 from arena.gateway.bench import benchmark_mock
-from arena.gateway.server import create_app
+from arena.gateway.endpoints import EndpointResolver
+from arena.gateway.litellm_adapter import create_production_app
 from arena.providers.config import Provider, load_providers
+from arena.providers.subscriptions import (
+    SubscriptionError,
+    SubscriptionStore,
+    Vendor,
+    import_subscription,
+)
 
 app = typer.Typer(name="gateway", no_args_is_help=True)
 providers_app = typer.Typer(name="providers", no_args_is_help=True)
@@ -41,6 +48,7 @@ def build_gateway_app(
         port: Annotated[int, typer.Option(min=1, max=65535)] = 8765,
         providers_file: Annotated[Path, typer.Option("--config")] = config,
         catalog_file: Annotated[Path, typer.Option("--catalog")] = catalog,
+        home: Annotated[Path | None, typer.Option("--home")] = None,
     ) -> None:
         """Start the local arena gateway."""
         if ctx.invoked_subcommand is not None:
@@ -54,7 +62,11 @@ def build_gateway_app(
         except (OSError, ValueError) as error:
             typer.echo(f"error: cannot load gateway configuration: {error}", err=True)
             raise typer.Exit(code=1) from error
-        application = create_app(provider_config, model_catalog)
+        application = create_production_app(
+            provider_config,
+            model_catalog,
+            endpoint_resolver=EndpointResolver(subscriptions=_subscription_store(home)),
+        )
         serve(app=application, host=host, port=port)
 
     @command_app.command("bench")
@@ -138,16 +150,43 @@ def test_providers(
         raise typer.Exit(code=1)
 
 
+_VENDORS: tuple[Vendor, ...] = ("claude", "chatgpt", "copilot")
+
+
+def _subscription_store(home: Path | None) -> SubscriptionStore:
+    return SubscriptionStore((home or Path.home() / ".arena") / "subscriptions")
+
+
 @app.command("import")
-def import_subscription(vendor: Annotated[str, typer.Argument()]) -> None:
-    """Report that subscription import requires the vendor-specific adapter."""
-    typer.echo(f"subscription import for {vendor!r} is not available", err=True)
-    raise typer.Exit(code=1)
+def import_subscription_command(
+    vendor: Annotated[str, typer.Argument()],
+    sign_in: Annotated[
+        Path, typer.Option("--from", exists=True, dir_okay=False, help="Native CLI sign-in file.")
+    ],
+    home: Annotated[Path | None, typer.Option("--home")] = None,
+) -> None:
+    """Copy a vendor CLI sign-in into the daemon's private subscription store."""
+    if vendor not in _VENDORS:
+        typer.echo(f"error: unknown vendor {vendor!r}; use one of {', '.join(_VENDORS)}", err=True)
+        raise typer.Exit(code=2)
+    try:
+        account = import_subscription(vendor, sign_in, _subscription_store(home))
+    except SubscriptionError as error:
+        typer.echo(f"error: {error}", err=True)
+        raise typer.Exit(code=1) from error
+    typer.echo(f"imported {account.display_name}; the source sign-in was not modified")
 
 
 @providers_app.command("import")
-def providers_import(vendor: Annotated[str, typer.Argument()]) -> None:
-    import_subscription(vendor)
+def providers_import(
+    vendor: Annotated[str, typer.Argument()],
+    sign_in: Annotated[
+        Path, typer.Option("--from", exists=True, dir_okay=False, help="Native CLI sign-in file.")
+    ],
+    home: Annotated[Path | None, typer.Option("--home")] = None,
+) -> None:
+    """Import a subscription account (alias of `arena import`)."""
+    import_subscription_command(vendor, sign_in, home)
 
 
 def create_doctor_command() -> Callable[..., None]:
