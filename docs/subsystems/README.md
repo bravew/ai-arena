@@ -14,6 +14,7 @@ below.
 | --- | --- |
 | `gateway.md` (planned) | The gateway: protocols, plan, lanes, rests, cache, cassettes, hooks, redaction |
 | [`providers-catalog.md`](providers-catalog.md) | Provider config, key resolution, and the model catalog |
+| [`server.md`](server.md) | Viewer/API server, remote authentication, artifact origin, and static export |
 | `agent-adapters.md` (planned) | One adapter per agent CLI: wiring, kit install, sessions |
 | `runners-sandbox.md` (planned) | Runners, the scheduler, and the Docker sandbox |
 | [`scoring.md`](scoring.md) | The scorer framework; deterministic scorers and LLM judges plug into it |
