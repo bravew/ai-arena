@@ -5,6 +5,7 @@
 | Part | Responsibility | Source |
 | --- | --- | --- |
 | Adapter contract | Describes each CLI's protocol, image, version, gateway wiring, kit install, command, native transcript and wiring check | [`AgentAdapter`](../../src/arena/agents/base.py) |
+| Pi adapter | Writes the provider config under `PI_CODING_AGENT_DIR`, stages instructions/skills/MCP there, supports a fixed scaffold prompt, and parses JSONL sessions | [`PiAdapter`](../../src/arena/agents/pi.py) |
 | Agent box | Limits adapter operations to file/config access and command execution inside the trial container | [`AgentBox`](../../src/arena/agents/base.py) |
 | Agent CLI runner | Wires and starts the CLI, then classifies whether its first request used the trial token and declared protocol | [`AgentRunner`](../../src/arena/runners/agent_cli.py) |
 | Contract harness | Checks a pinned CLI invocation against an injectable provider contract without a real provider | [`ContractHarness`](../../src/arena/agents/testing.py) |
@@ -18,9 +19,11 @@
 4. With a reached call, the runner collects gateway calls and any native transcript, and returns `reached` with metered flags.
 5. Without a reached call, the runner calls `check()`. A failed check returns `errored` with `wiring`; a successful check returns `unmetered` for transcript-only reporting.
 6. `assemble_session` parses newline-delimited native records into turns, assigns only Calls with the trial ID, attaches the filesystem diff to the final turn, and creates `session_turn` plus per-skill `skill_event` RunEvents.
+7. `PiAdapter` writes its `models.json` under `/home/agent/.pi/agent`, exports `PI_CODING_AGENT_DIR` for the CLI, and runs Pi in JSON print mode. A pinned scaffold prompt adds the same fixed system prompt independent of the selected model.
 
 ## Constraints and failure behavior
 
+- Pi versions below 0.99.0 fail during `version()` with a reason because native MCP support is required by the adapter's kit target. Malformed Pi JSONL produces a partial session; committed Pi transcript samples are mock fixtures, not vendor-recorded transcripts.
 - Adapter operations receive only the supplied `AgentBox`; adapters must write configuration inside the container and must not access the user's host configuration.
 - Exceptions during version detection, wiring, kit installation, command creation, or transcript handling return `errored` with `error_class="wiring"`.
 - A missing trial-token call is never treated as a task failure. A successful wiring check marks the result unmetered; a failed check marks it errored.
@@ -32,5 +35,5 @@
 ## Verification
 
 ```sh
-uv run pytest tests/agents/test_contract_harness.py
+uv run pytest tests/agents/test_pi.py tests/agents/test_contract_harness.py
 ```

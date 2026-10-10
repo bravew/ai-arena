@@ -1,0 +1,4 @@
+{"type":"session_start","session_id":"pi-mock-session"}
+{"type":"turn_start","turn_id":"turn-1"}
+{"type":"tool_execution_start","toolName":"read","args":{"path":"/home/agent/.pi/agent/skills/review/SKILL.md"}}
+{"type":"tool_execution_start"
