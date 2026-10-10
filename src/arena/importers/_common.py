@@ -63,8 +63,7 @@ class ImportedBundle:
         bundle_id = _safe_id(f"import-{self.source}-{self.name}")
         contestant_id = _safe_id(f"{bundle_id}-contestant")
         trial_ids = [
-            _safe_id(f"{bundle_id}-{trial.id}-{index}")
-            for index, trial in enumerate(self.trials)
+            _safe_id(f"{bundle_id}-{trial.id}-{index}") for index, trial in enumerate(self.trials)
         ]
         timestamp = _source_timestamp(self.metadata, self.trials)
         has_failure = any(trial.status in {"error", "failed"} for trial in self.trials)
