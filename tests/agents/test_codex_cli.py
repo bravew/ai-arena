@@ -142,6 +142,46 @@ def test_codex_mcp_config_uses_gateway_path_and_token_env(tmp_path: Path) -> Non
     assert "/mcp/docs" in box.files[CODEX_CONFIG]
     assert f'bearer_token_env_var = "{CODEX_TOKEN_ENV}"' in box.files[CODEX_CONFIG]
     assert "DOCS_TOKEN" not in box.files[CODEX_CONFIG]
+    config = tomllib.loads(box.files[CODEX_CONFIG])
+    assert config["mcp_servers"]["docs"] == {
+        "url": "http://gateway:7400/mcp/docs",
+        "bearer_token_env_var": CODEX_TOKEN_ENV,
+    }
+    assert adapter.check(box).ok
+
+
+def test_codex_kit_settings_remain_at_root_with_provider_and_mcp(tmp_path: Path) -> None:
+    from arena.kits.loading import load_kit
+
+    manifest_path = tmp_path / "kit.yaml"
+    manifest_path.write_text(
+        "id: settings-kit\nversion: 1\ninstructions: null\nskills: []\n"
+        "settings:\n  codex-cli:\n    approval_policy: never\n"
+        "mcp:\n  - name: docs\n    url: https://example.invalid/mcp\n",
+        encoding="utf-8",
+    )
+    adapter = CodexCliAdapter()
+    box = FakeBox()
+    adapter.wire(
+        box,
+        GatewayEndpoint("http://gateway:7400/v1", "arena-trial-1"),
+        ModelRef.parse("openai/gpt-test"),
+    )
+    adapter.install_kit(
+        box,
+        ResolvedCodexKit(
+            load_kit(manifest_path),
+            tmp_path,
+            GatewayEndpoint("http://gateway:7400", "arena-trial-1"),
+        ),
+    )
+
+    config = tomllib.loads(box.files[CODEX_CONFIG])
+    assert config["approval_policy"] == "never"
+    assert "approval_policy" not in config["mcp_servers"]["docs"]
+    assert "approval_policy" not in config["model_providers"]["arena"]
+    assert config["model"] == "gpt-test"
+    assert adapter.check(box).ok
 
 
 def test_command_is_headless_and_uses_task_prompt_file(tmp_path: Path) -> None:

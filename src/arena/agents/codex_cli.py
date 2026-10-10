@@ -86,13 +86,19 @@ class CodexCliAdapter:
             token=f"${{{CODEX_TOKEN_ENV}}}",
         )
         result = install_kit(box, kit.kit, kit.root, target, endpoint)
-        fragments = (f"{CODEX_HOME}/.arena-mcp.toml", f"{CODEX_HOME}/.arena-settings.toml")
-        additions = [box.read_text(path) for path in fragments if path in result.written]
-        if additions:
-            original = box.read_text(CODEX_CONFIG)
-            box.write_text(CODEX_CONFIG, original.rstrip() + "\\n\\n" + "\\n".join(additions))
+        mcp_path = f"{CODEX_HOME}/.arena-mcp.toml"
+        settings_path = f"{CODEX_HOME}/.arena-settings.toml"
+        config_changed = mcp_path in result.written or settings_path in result.written
+        if config_changed:
+            config = box.read_text(CODEX_CONFIG).rstrip()
+            if settings_path in result.written:
+                config = box.read_text(settings_path).rstrip() + "\n\n" + config
+            if mcp_path in result.written:
+                config += "\n\n" + box.read_text(mcp_path).rstrip()
+            tomllib.loads(config)
+            box.write_text(CODEX_CONFIG, config + "\n")
         return KitInstall(
-            written=tuple((*result.written, *((CODEX_CONFIG,) if additions else ()))),
+            written=tuple((*result.written, *((CODEX_CONFIG,) if config_changed else ()))),
             refused=result.refused,
         )
 
