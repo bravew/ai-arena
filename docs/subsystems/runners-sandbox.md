@@ -4,7 +4,7 @@
 
 | Part | Responsibility | Source |
 | --- | --- | --- |
-| Docker sandbox | Creates one internal Docker network and a resource-limited container per trial; exposes only the gateway and trial token; removes container and network at context exit | [`DockerSandbox`](../../src/arena/sandbox/docker.py) |
+| Docker sandbox | Creates one internal Docker network and a resource-limited container per trial; `start` leaves it idle for adapter wiring and `DockerAgentBox` runs commands and copies files through `docker exec`; removes container and network at context exit | [`DockerSandbox`](../../src/arena/sandbox/docker.py), [`DockerAgentBox`](../../src/arena/sandbox/agent_box.py) |
 | Sandbox contract | Validates trial identity, image, command, workspace, gateway URL and token, plus positive resource limits | [`SandboxSpec`](../../src/arena/sandbox/docker.py), [`SandboxLimits`](../../src/arena/sandbox/docker.py) |
 | Completion runner | Provides an injectable completion dispatcher and a deterministic local mock adapter | [`run_completion`](../../src/arena/runners/completion.py), [`mock_completion`](../../src/arena/runners/completion.py) |
 | Scheduler | Expands deterministic task × contestant × repeat jobs, persists trial state, caches succeeded trials, resumes missing/errored work, and enforces concurrency and subscription rests | [`expand_jobs`](../../src/arena/runners/scheduler.py), [`run_jobs`](../../src/arena/runners/scheduler.py) |
@@ -18,10 +18,10 @@
 3. It connects the gateway container to that network under the gateway URL hostname, then starts the agent container on the same network.
 4. The agent container receives the gateway URL and trial token, but no provider API key; its root filesystem is read-only, `/tmp` is a bounded tmpfs and the workspace is the only writable bind mount.
 5. Docker enforces CPU, memory and PID limits. `asyncio.timeout` enforces the execution time limit.
-6. On normal exit, error, timeout or cancellation, `DockerSandbox.run` removes the agent container, disconnects the gateway and removes the network.
-7. `arena run` loads the completion task prompts and dispatches jobs through the scheduler. The current CLI wiring uses the deterministic mock adapter; a gateway adapter can be supplied to `run_jobs` without changing scheduler behavior.
-8. `prepare_contestant` hashes custom strategy source into contestant parameters before trial expansion, so a source change gets a new deterministic contestant and trial cache identity. `Orchestrator.run` then selects the strategy. Best-of-n accepts at most 64 samples and runs them in batches of four before selection with a judge call, a supplied test check, or the first sample; planner-executor makes a plan call followed by an execution call; custom strategies load `async def run(context)` from `custom:<path>`.
-9. Agent trials use `DockerSandbox.start` instead of `run`: it starts the same limited container idle (`sleep infinity`, with `/home/agent` as a bounded tmpfs for adapter config), and `DockerAgentBox` gives the adapter `write_text`, `read_text` and `execute` through `docker exec`. The runner execs the agent command only after `wire` and `install_kit`, so a wiring failure never starts the agent. File content goes over stdin, never argv. The box is synchronous, which matches `AgentRunner` calling it from `asyncio.to_thread`.
+6. On normal exit, error, timeout or cancellation, the sandbox removes the agent container, disconnects the gateway and removes the network.
+7. Agent trials use `DockerSandbox.start`: it starts the limited container idle (`sleep infinity`) with `/home/agent` as a bounded tmpfs for adapter config. `DockerAgentBox` provides `write_text`, `read_text` and `execute` through `docker exec`; file content goes over stdin, never argv. The adapter wires the agent and installs the kit before the runner starts its command, so a wiring failure never starts the agent. The synchronous box matches the runner's `asyncio.to_thread` calls.
+8. `arena run` loads completion task prompts and dispatches jobs through the scheduler. The current CLI wiring uses the deterministic mock adapter; a gateway adapter can be supplied to `run_jobs` without changing scheduler behavior.
+9. `prepare_contestant` hashes custom strategy source into contestant parameters before trial expansion, so a source change gets a new deterministic contestant and trial cache identity. `Orchestrator.run` then selects the strategy. Best-of-n accepts at most 64 samples and runs them in batches of four before selection with a judge call, a supplied test check, or the first sample; planner-executor makes a plan call followed by an execution call; custom strategies load `async def run(context)` from `custom:<path>`.
 10. Each child call passes a `CallContext` with its trial id, span id, parent span id, name and orchestration purpose to the dispatcher. The returned root span and child spans roll up cost, cache hits and unknown prices into `OrchestrationResult`, a `CompletionResult` the scheduler can record.
 
 ## Constraints and failure behavior
@@ -40,13 +40,16 @@
 - A custom module is user Python code loaded into the arena process. Call `prepare_contestant` before expanding trial jobs or checking the scheduler cache; it binds the module's SHA-256 digest into `Contestant.params` and therefore contestant/trial identity. The runner checks the source again before execution and fails if it changed after planning. `OrchestrationResult.strategy_digest` also records the digest.
 - Best-of-n requires `1 <= n <= 64` and dispatches at most four samples concurrently in sequential batches. Invalid bounds fail before any child call starts.
 
-- `docker run --mount` accepts only `key=value` fields. The workspace mount used to carry a bare `rw` field, which a real Docker daemon rejects; the fake-client tests could not see that, so `tests/agents/test_docker_contract.py` runs a real container.
-- `tests/agents/test_docker_contract.py` needs a local Docker daemon and the `node:20-bullseye-slim` image, and skips otherwise. It checks one pinned mock CLI against a mock gateway container; no real agent CLI (Claude Code, Codex, OpenCode, Pi, Aider) has been run in a container yet.
+- `docker run --mount` accepts only `key=value` fields. The workspace mount used to carry a bare `rw` field, which a real Docker daemon rejects; #27 fixed it and `tests/sandbox/test_docker.py` pins the accepted mount format.
+- URL MCP servers are registered in the daemon-side proxy with their resolved headers. The container receives only the proxy URL and its trial token. Redirects are returned to the caller, never followed with a daemon-held header.
+- This CP3 branch does not yet include the CP2 gateway server, so `McpProxy` is transport-agnostic and has no HTTP route mounted here. The epic sync must mount `/mcp/<name>` behind trial-token auth and send `McpSpan` events to the call/session span store.
+- The adapter supplies the agent-specific MCP settings serializer through `KitTarget`; this module does not claim one JSON/TOML layout fits every agent. Command MCP servers are represented for serializers but still run inside the container from a pinned package or image.
+- Git-backed skills are refused by `install_kit` until a pinned checkout is supplied to the installer. Local skills are copied and their bytes checked in the container.
 
 ## Verification
 
 ```sh
-uv run pytest tests/sandbox tests/agents
+uv run pytest tests/kits tests/gateway tests/agents tests/sandbox
 ```
 
-The fake Docker interface exercises command configuration and teardown without requiring a Docker daemon. A real container connectivity test still needs a Linux Docker runtime and gateway image/container; it is not part of the unit suite yet.
+The MCP proxy uses an injected upstream transport; a standard-library buffered HTTP implementation is included for small runs and tests.

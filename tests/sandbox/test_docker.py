@@ -56,6 +56,9 @@ def test_run_uses_internal_network_limits_and_trial_token_only(spec: SandboxSpec
             assert "--network" in args
             assert "--memory" in args and "--cpus" in args and "--pids-limit" in args
             assert "--read-only" in args
+            mount = args[args.index("--mount") + 1]
+            assert all("=" in field for field in mount.split(","))
+            assert mount.endswith("dst=/workspace")
             assert "ARENA_GATEWAY_TOKEN=trial-secret" in args
             assert not any("ANTHROPIC_API_KEY" in arg or "OPENAI_API_KEY" in arg for arg in args)
             assert container.id == "run-id"
