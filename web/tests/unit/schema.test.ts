@@ -48,12 +48,54 @@ describe('validateBundle', () => {
     });
   });
 
-  it('says a newer bundle version is unsupported, not just "not equal to 1"', () => {
-    const issues = issuesOf(validateBundle({ ...bundle(), bundle_version: 2 }));
+  it('accepts the v2 fixture with required provenance and artifact trial links', () => {
+    const result = validateBundle(bundle());
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.value.bundle_version).toBe(2);
+      expect(result.value.provenance?.origin).toBe('native');
+      expect(result.value.artifacts[0]?.trial_id).toBe('trial-base');
+    }
+  });
+
+  it('rejects a v2 bundle missing required provenance', () => {
+    const b = bundle();
+    delete b.provenance;
+    expect(issuesOf(validateBundle(b))).toContainEqual({
+      path: '/provenance',
+      message: 'is missing required property "provenance"',
+    });
+  });
+
+  it('rejects a v2 artifact without its required trial link', () => {
+    const b = bundle();
+    delete (b.artifacts as Record<string, unknown>[])[0]!.trial_id;
+    expect(issuesOf(validateBundle(b)).map((issue) => issue.path)).toContain('/artifacts/0/trial_id');
+  });
+
+  it('rejects an unsupported bundle version', () => {
+    const issues = issuesOf(validateBundle({ ...bundle(), bundle_version: 3 }));
     expect(issues[0]).toEqual({
       path: '/bundle_version',
-      message: 'unsupported bundle version 2; this viewer reads version 1',
+      message: 'unsupported bundle version 3; this viewer reads versions 1 and 2',
     });
+  });
+
+  it('accepts a strict v1 payload without v2 provenance or artifact trial links', () => {
+    const v2 = bundle();
+    const v1: Record<string, unknown> = { ...v2, bundle_version: 1 };
+    delete v1.provenance;
+    for (const artifact of v1.artifacts as Record<string, unknown>[]) delete artifact.trial_id;
+    const result = validateBundle(v1);
+    expect(result.ok).toBe(true);
+    if (result.ok) expect(result.value.bundle_version).toBe(1);
+  });
+
+  it('rejects v1 payloads containing v2-only fields', () => {
+    const v1 = { ...bundle(), bundle_version: 1 };
+    const issues = issuesOf(validateBundle(v1));
+    expect(issues.map((issue) => issue.path)).toContain('/provenance');
+    expect(issues.map((issue) => issue.path)).toContain('/artifacts/0/trial_id');
   });
 
   it('rejects a malformed artifact digest', () => {
@@ -79,6 +121,7 @@ describe('validateBundle', () => {
     const required = [
       'bundle_version',
       'run',
+      'provenance',
       'contestants',
       'trials',
       'calls',

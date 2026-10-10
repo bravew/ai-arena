@@ -6,8 +6,9 @@ change, then follow its source links to check the code.
 
 ## Pages
 
-The references are added with the code they describe. Remaining planned pages
-are listed below.
+Subsystem references are added alongside the code they describe. The viewer
+reference covers Sessions and Kit effect; other planned pages remain listed
+below.
 
 | Page | Subsystem |
 | --- | --- |
@@ -17,9 +18,12 @@ are listed below.
 | `agent-adapters.md` (planned) | One adapter per agent CLI: wiring, kit install, sessions |
 | `runners-sandbox.md` (planned) | Runners, the scheduler, and the Docker sandbox |
 | [`scoring.md`](scoring.md) | The scorer framework; deterministic scorers and LLM judges plug into it |
-| `stats.md` (planned) | Aggregation, bootstrap, ratings, Pareto, run-diff |
+| [`stats.md`](stats.md) | Aggregation, bootstrap, ratings, Pareto, run-diff |
+| [`viewer-compare.md`](viewer-compare.md) | Compare, Trace, and Run diff views |
 | `observability.md` (planned) | Calls ledger, event stream, spans, metrics |
-| `viewer-live.md` (planned) | The viewer and the Live stage |
+| [`sessions-kit-effect.md`](sessions-kit-effect.md) | Sessions timelines and paired kit-effect comparisons |
+| [`ops-view.md`](ops-view.md) | The Ops view: calls ledger, usage, lanes, meters and hook stats |
+| [`viewer-live.md`](viewer-live.md) | The viewer and the Live stage |
 
 ## Page template
 
