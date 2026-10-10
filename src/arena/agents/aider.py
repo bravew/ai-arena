@@ -137,4 +137,4 @@ class AiderAdapter:
 
 def _looks_truncated(content: str) -> bool:
     """Recognize an incomplete Aider search/replace edit in the saved history."""
-    return content.count("<<<<<<< ORIGINAL") != content.count(">>>>>>> UPDATED")
+    return content.count("<<<<<< ORIGINAL") != content.count(">>>>>>> UPDATED")
