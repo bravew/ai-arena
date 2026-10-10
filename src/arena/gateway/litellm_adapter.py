@@ -47,7 +47,9 @@ class NativeDispatcher:
             raise ProviderEndpointError(
                 "native dispatcher does not translate protocols; use the LiteLLM adapter"
             )
-        endpoint = self.endpoint_resolver.resolve(context.target, protocol=context.target_protocol)
+        endpoint = self.endpoint_resolver.resolve(
+            context.target, protocol=context.target_protocol, candidate=context.candidate
+        )
         request_body = (
             _streaming_body(context.prepared.body)
             if context.streaming and context.target_protocol in {"chat", "responses"}
@@ -227,7 +229,9 @@ class LiteLLMAdapter:
             raise ProviderEndpointError(
                 f"LiteLLM adapter does not reach protocol {context.target_protocol!r}"
             )
-        endpoint = self.endpoint_resolver.resolve(context.target, protocol=context.target_protocol)
+        endpoint = self.endpoint_resolver.resolve(
+            context.target, protocol=context.target_protocol, candidate=context.candidate
+        )
         if endpoint.auth_headers is not None:
             raise ProviderEndpointError(
                 "LiteLLM adapter does not send subscription-signed requests"
