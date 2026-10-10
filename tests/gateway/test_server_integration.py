@@ -15,6 +15,7 @@ from arena.catalog.config import load_catalog
 from arena.core.models import Call, Tokens
 from arena.gateway.budget import Budget
 from arena.gateway.lanes import LanePool, LanePoolFull, LaneRejected
+from arena.gateway.litellm_adapter import NativeDispatcher
 from arena.gateway.server import (
     CallContext,
     DispatchContext,
@@ -103,6 +104,64 @@ def test_request_runs_through_dispatch_and_releases_lane(tmp_path: Path) -> None
     assert calls[0].effort_applied is None
     assert calls[0].tokens == Tokens.model_validate({"in": 2, "out": 3})
     assert metrics.snapshot()["counters"]["gateway_requests{status=200}"] == 1
+
+
+def test_mock_provider_runs_auth_budget_lane_relay_ledger_and_events(tmp_path: Path) -> None:
+    providers_path = tmp_path / "providers.yaml"
+    providers_path.write_text("providers:\n  - id: mock\n    kind: mock\n", encoding="utf-8")
+    catalog_path = tmp_path / "catalog.yaml"
+    catalog_path.write_text(
+        "price_version: test\nmodels:\n"
+        "  - ref: mock/test-model\n"
+        "    protocols: [anthropic]\n"
+        "    pricing: subscription\n",
+        encoding="utf-8",
+    )
+    providers = load_providers(providers_path)
+    catalog = load_catalog(catalog_path)
+    budget = Budget()
+    event_log = EventLog(tmp_path / "events")
+    lane_pool = LanePool(concurrency=1)
+
+    class MemoryLedger(LedgerWriter):
+        def __init__(self) -> None:
+            self.calls: list[Call] = []
+
+        def record(self, call: Call) -> Call:
+            self.calls.append(call)
+            return call
+
+    ledger = MemoryLedger()
+    app = create_app(
+        providers,
+        catalog,
+        dispatcher=NativeDispatcher.mock_dispatcher(),
+        context_provider=lambda target, caller: CallContext(
+            "trial-112", "acct-hash", "call-mock", 1, None, "test"
+        ),
+        translator=_translator,
+        lanes=lane_pool,
+        budget=budget,
+        ledger=ledger,
+        events=event_log,
+    )
+    with TestClient(app) as client:
+        response = client.post(
+            "/v1/messages",
+            headers={"Authorization": "Bearer arena-trial-112"},
+            json={"model": "mock/test-model", "messages": [{"role": "user", "content": "hi"}]},
+        )
+    assert response.status_code == 200
+    assert response.json()["content"][0]["text"] == "Mock response"
+    assert lane_pool.for_key("mock/main").in_flight == 0
+    assert len(ledger.calls) == 1
+    assert ledger.calls[0].tokens == Tokens.model_validate({"in": 1, "out": 2})
+    assert budget.report().remaining_usd == pytest.approx(20.0)
+    recorded_events = asyncio.run(event_log.read_after("trial-112", 0))
+    assert len(recorded_events) == 1
+    assert recorded_events[0].kind == "call_finished"
+    assert recorded_events[0].ref == "call-mock"
+    assert recorded_events[0].data["status"] == 200
 
 
 def test_status_routes_require_ops_token(tmp_path: Path) -> None:
@@ -246,6 +305,40 @@ def test_upstream_rate_limit_reports_lane_and_records_metadata() -> None:
     assert recorded[0].status == 429
 
 
+def test_same_protocol_without_translator_preserves_request_bytes() -> None:
+    captured: list[bytes] = []
+
+    async def dispatcher(context: DispatchContext) -> UpstreamResponse:
+        captured.append(context.prepared.body)
+        return UpstreamResponse(200, {}, _response_body())
+
+    app = create_app(PROVIDERS, CATALOG, dispatcher=dispatcher)
+    request_body = b'{ "model": "anthropic/claude-opus-5-5", "messages": [] }'
+    with TestClient(app) as client:
+        response = client.post(
+            "/v1/messages",
+            headers={"Authorization": "Bearer arena-trial-1", "content-type": "application/json"},
+            content=request_body,
+        )
+    assert response.status_code == 200
+    assert captured == [request_body]
+
+
+def test_cross_protocol_without_translator_fails_closed() -> None:
+    async def dispatcher(context: DispatchContext) -> UpstreamResponse:
+        return UpstreamResponse(200, {}, _response_body())
+
+    app = create_app(PROVIDERS, CATALOG, dispatcher=dispatcher)
+    with TestClient(app) as client:
+        response = client.post(
+            "/v1/chat/completions",
+            headers={"Authorization": "Bearer arena-trial-1"},
+            json={"model": "anthropic/claude-opus-5-5", "messages": []},
+        )
+    assert response.status_code == 503
+    assert response.json()["error"]["type"] == "relay_unavailable"
+
+
 def test_no_dispatcher_preserves_501() -> None:
     app = create_app(PROVIDERS, CATALOG)
     with TestClient(app) as client:
@@ -274,6 +367,74 @@ def test_budget_and_ledger_require_validated_context_configuration() -> None:
 class RecordingLedgerForConfig(LedgerWriter):
     def record(self, call: Call) -> Call:
         return call
+
+
+def test_stream_keepalive_is_sent_while_waiting_for_lane(monkeypatch: pytest.MonkeyPatch) -> None:
+    async def exercise() -> None:
+        monkeypatch.setattr("arena.gateway.lanes.KEEPALIVE_SECONDS", 0.01)
+        lane_pool = LanePool(concurrency=1)
+        lane = lane_pool.for_key("anthropic/main")
+        await lane.acquire()
+        chunks: list[bytes] = []
+
+        async def body() -> AsyncIterator[bytes]:
+            yield b"upstream"
+
+        async def dispatcher(context: DispatchContext) -> UpstreamResponse:
+            return UpstreamResponse(200, {"content-type": "text/event-stream"}, body())
+
+        app = create_app(
+            PROVIDERS, CATALOG, dispatcher=dispatcher, lanes=lane_pool, translator=_translator
+        )
+        request_bytes = b'{"model":"anthropic/claude-opus-5-5","stream":true,"messages":[]}'
+        request_sent = False
+
+        async def receive() -> Message:
+            nonlocal request_sent
+            if not request_sent:
+                request_sent = True
+                return {"type": "http.request", "body": request_bytes, "more_body": False}
+            await asyncio.Event().wait()
+            raise AssertionError("unreachable")
+
+        async def send(message: Message) -> None:
+            if message["type"] == "http.response.body":
+                chunks.append(message.get("body", b""))
+
+        async def release_held_lane() -> None:
+            await asyncio.sleep(0.05)
+            await lane.release()
+
+        scope: Scope = {
+            "type": "http",
+            "asgi": {"version": "3.0", "spec_version": "2.3"},
+            "http_version": "1.1",
+            "method": "POST",
+            "scheme": "http",
+            "path": "/v1/messages",
+            "raw_path": b"/v1/messages",
+            "query_string": b"",
+            "root_path": "",
+            "headers": [
+                (b"authorization", b"Bearer arena-trial-1"),
+                (b"content-type", b"application/json"),
+            ],
+            "client": ("127.0.0.1", 12345),
+            "server": ("testserver", 80),
+        }
+        release_task = asyncio.create_task(release_held_lane())
+        try:
+            await asyncio.wait_for(app(scope, receive, send), timeout=1)
+        finally:
+            if not release_task.done():
+                release_task.cancel()
+                await asyncio.gather(release_task, return_exceptions=True)
+            if lane.in_flight:
+                await lane.release()
+        assert chunks.index(b": keep-alive\n\n") < chunks.index(b"upstream")
+        assert lane.in_flight == 0
+
+    asyncio.run(exercise())
 
 
 def test_streaming_holds_lane_until_body_finishes() -> None:
