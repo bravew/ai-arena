@@ -11,16 +11,19 @@ import './live.css';
 
 const fixtureResult = validateEventStream(fixtureText);
 const fixtureEvents = fixtureResult.ok ? fixtureResult.value : [];
+const emptyEvents: RunEvent[] = [];
 
-export function LiveView({ bundle: input }: { bundle: unknown }) {
+export function LiveView({ bundle: input, replayEvents }: { bundle: unknown; replayEvents?: RunEvent[] }) {
   const bundle = parseLiveBundle(input);
   if (!bundle) return <section className="panel" role="alert"><h2>Live data unavailable</h2><p>The loaded bundle does not contain the version 2 live ledger fields.</p></section>;
-  return <LiveRun bundle={bundle} />;
+  const initialEvents = replayEvents ??
+    (window.location.protocol === 'file:' ? emptyEvents : fixtureEvents);
+  return <LiveRun bundle={bundle} replayEvents={initialEvents} />;
 }
 
-function LiveRun({ bundle }: { bundle: LiveBundle }) {
-  const [source, setSource] = useState<LiveSource>(() => new ReplaySource(fixtureEvents));
-  const [events, setEvents] = useState<RunEvent[]>(fixtureEvents);
+function LiveRun({ bundle, replayEvents }: { bundle: LiveBundle; replayEvents: RunEvent[] }) {
+  const [source, setSource] = useState<LiveSource>(() => new ReplaySource(replayEvents));
+  const [events, setEvents] = useState<RunEvent[]>(replayEvents);
   const [cursor, setCursor] = useState(0);
   const [playing, setPlaying] = useState(false);
   const [rankMode, setRankMode] = useState(false);
@@ -100,7 +103,16 @@ function LiveRun({ bundle }: { bundle: LiveBundle }) {
     if (cursor >= events.length) setCursor(0);
     setPlaying(true);
   };
-  const useReplay = () => { setSource(new ReplaySource(fixtureEvents)); setEvents(fixtureEvents); setCursor(0); setPlaying(false); setSourceError(undefined); };
+  const useReplay = () => {
+    const selectedEvents = replayEvents.length === 0 && window.location.protocol !== 'file:'
+      ? fixtureEvents
+      : replayEvents;
+    setSource(new ReplaySource(selectedEvents));
+    setEvents(selectedEvents);
+    setCursor(0);
+    setPlaying(false);
+    setSourceError(undefined);
+  };
   const useLive = () => {
     const live = new URLSearchParams(window.location.search).get('source');
     if (!live) { setSourceError('Add ?source=<arena-origin> to connect to a running arena.'); return; }

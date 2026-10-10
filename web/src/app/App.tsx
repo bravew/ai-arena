@@ -1,13 +1,15 @@
 import { useContext, useMemo, useState } from 'react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { createBrowserRouter, RouterProvider } from 'react-router';
+import { createBrowserRouter, createHashRouter, RouterProvider } from 'react-router';
+import { validateBundle, validateEventStream } from '../lib/schema';
+import type { RunEvent } from '../lib/schema';
 import { schemaExample } from '../lib/schema/fixture';
-import { validateBundle } from '../lib/schema';
 import { AppLayout } from './routes';
 import { HomePage, PlaceholderPage } from './pages';
 import { SessionsView } from '../views/sessions/SessionsView';
 import { KitEffectView } from '../views/kit-effect/KitEffectView';
 import { BundleContext, useBundleState } from './state';
+import { readStaticBundle } from './static-bundle';
 import { CompareView } from '../views/compare/CompareView';
 import { TraceView } from '../views/trace/TraceView';
 import { RunDiffView } from '../views/rundiff/RunDiffView';
@@ -18,11 +20,11 @@ function CompareRoute() { const { bundle } = useBundleState(); return bundle ? <
 function TraceRoute() { const { bundle } = useBundleState(); return bundle ? <TraceView bundle={bundle} /> : <PlaceholderPage title="Trace" />; }
 function RunDiffRoute() { const { bundle } = useBundleState(); return bundle ? <RunDiffView bundle={bundle} /> : <PlaceholderPage title="Run diff" />; }
 function LiveRoute() {
-  const { bundle, validation } = useBundleState();
-  return <LiveView bundle={bundle ?? (validation?.ok === false ? schemaExample : undefined)} />;
+  const { bundle, events } = useBundleState();
+  return <LiveView bundle={bundle} replayEvents={events} />;
 }
 
-const router = createBrowserRouter([
+const routeConfig = [
   {
     path: '/',
     element: <AppLayout />,
@@ -41,7 +43,11 @@ const router = createBrowserRouter([
       { path: '*', element: <PlaceholderPage title="Page not found" /> },
     ],
   },
-]);
+];
+
+const router = window.location.protocol === 'file:'
+  ? createHashRouter(routeConfig)
+  : createBrowserRouter(routeConfig);
 
 function SessionsPage() {
   const { bundle } = useContext(BundleContext) ?? {};
@@ -56,14 +62,32 @@ function KitEffectPage() {
 const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false, staleTime: 30_000 } } });
 
 export function App() {
-  const [validation, setValidation] = useState(() => validateBundle(schemaExample));
+  const [staticData] = useState(readStaticBundle);
+  const [validation, setValidation] = useState(() => staticData?.error
+    ? { ok: false as const, issues: [{ path: '', message: staticData.error }] }
+    : validateBundle(staticData?.input ?? schemaExample));
+  const [events, setEvents] = useState<RunEvent[] | undefined>(() => {
+    if (!staticData) return undefined;
+    const parsed = validateEventStream(
+      staticData.events.map((event) => JSON.stringify(event)).join('\n'),
+    );
+    return parsed.ok ? parsed.value : [];
+  });
   const bundle = validation.ok ? validation.value : undefined;
   const context = useMemo(() => ({
     bundle,
     validation,
+    events,
+    loadEvents: (input: unknown) => {
+      const parsed = Array.isArray(input)
+        ? input.map((event) => JSON.stringify(event)).join('\n')
+        : '';
+      const result = validateEventStream(parsed);
+      setEvents(result.ok ? result.value : undefined);
+    },
     loadBundle: (input: unknown) => setValidation(validateBundle(input)),
     setLoadError: (message: string) => setValidation({ ok: false, issues: [{ path: '', message }] }),
-  }), [bundle, validation]);
+  }), [bundle, events, validation]);
 
   return (
     <QueryClientProvider client={queryClient}>

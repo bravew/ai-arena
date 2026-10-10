@@ -1,4 +1,4 @@
-import { readFileSync } from 'node:fs';
+import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { expect, test } from '@playwright/test';
 import type { Bundle } from '../src/lib/schema';
@@ -19,6 +19,44 @@ test('final ledger score is not shown before its score event is replayed', async
   await page.goto('/live');
   const initialScoreCells = page.getByRole('table', { name: 'Race chart facts' }).getByRole('row').locator('td').nth(2);
   await expect(initialScoreCells).toContainText('—');
+});
+
+test('static export loads its embedded bundle and replays its event log from file://', async ({ page }) => {
+  const exportedBundle = { ...bundle, run: { ...bundle.run, id: 'exported-static-run' } };
+  const exportedEvents = [
+    { event_version: 1, seq: 1, ts: '2026-01-01T00:00:00Z', run_id: 'exported-static-run', kind: 'run_started', data: {} },
+    { event_version: 1, seq: 2, ts: '2026-01-01T00:00:01Z', run_id: 'exported-static-run', kind: 'run_finished', data: { status: 'succeeded' } },
+  ];
+  const dist = resolve(process.cwd(), 'dist');
+  let html = readFileSync(resolve(dist, 'index.html'), 'utf8');
+  html = html.replace(
+    /<script type="module" crossorigin src="\.\/(.+?)"><\/script>/,
+    (_tag, asset: string) => {
+      const code = readFileSync(resolve(dist, asset), 'utf8').replaceAll('</script', '<\\/script');
+      return `<script type="module">${code}</script>`;
+    },
+  );
+  html = html.replace(
+    /<link rel="stylesheet" crossorigin href="\.\/(.+?)">/,
+    (_tag, asset: string) => `<style>${readFileSync(resolve(dist, asset), 'utf8')}</style>`,
+  );
+  const data = JSON.stringify({ input: exportedBundle, events: exportedEvents }).replaceAll(
+    '<',
+    '\\u003c',
+  );
+  html = html.replace(
+    '</body>',
+    `<script id="arena-static-data" type="application/json">${data}</script></body>`,
+  );
+  const exportDir = resolve(process.cwd(), 'test-results', 'arena-static-export');
+  mkdirSync(exportDir, { recursive: true });
+  writeFileSync(resolve(exportDir, 'index.html'), html);
+
+  await page.goto(`file://${resolve(exportDir, 'index.html')}#/live`);
+  await expect(page.getByText('exported-static-run')).toBeVisible();
+  await page.getByRole('button', { name: 'Play replay' }).click();
+  await expect(page.getByText('2 / 2 events')).toBeVisible({ timeout: 10000 });
+  await expect(page.locator('.live-caption')).toContainText('Run succeeded.');
 });
 
 test('live transport rejects an invalid event batch', async ({ page }) => {
