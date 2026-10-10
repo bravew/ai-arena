@@ -4,7 +4,7 @@
 
 | Part | Responsibility | Source |
 | --- | --- | --- |
-| HTTP server | Serve the viewer assets, run listing and bundle API, health, and event long-poll. Register routes through `ArenaHTTPServer.register_route` for extensions such as human votes. | [`create_server`](../../src/arena/server/app.py) |
+| HTTP server | Serve the viewer assets, run listing and bundle API, health, and event long-poll. Dispatch registered GET and POST routes through `ArenaHTTPServer.register_route` for extensions such as human votes. | [`create_server`](../../src/arena/server/app.py) |
 | Remote authentication | Require `ARENA_RUN_KEY` for non-loopback binds, exchange the sign-in link for an HttpOnly SameSite cookie, and refuse browser-origin POSTs. | `create_server` in [`app.py`](../../src/arena/server/app.py) |
 | Artifact origin | Serve content-addressed HTML artifact blobs from a separate listener with sandboxing headers. | `serve_artifact` and `serve` in [`app.py`](../../src/arena/server/app.py) |
 | Static viewer packaging | Copy only a prebuilt Vite `web/dist` tree into a bundle export; reject missing assets and symlinks. | [`export_viewer_assets`](../../src/arena/server/static.py) |
@@ -14,7 +14,7 @@
 
 1. `arena serve` invokes `serve` with loopback `127.0.0.1:7400` and artifact port `7402` defaults.
 2. `serve` starts separate standard-library threaded HTTP servers. The viewer/API server serves `web/dist` when built and `/api/health`, `/api/runs`, `/api/runs/{id}/bundle`, and `/api/runs/{id}/events` routes.
-3. Event requests validate the JSONL records and return all events with `seq > after`, waiting up to the capped `wait` duration when no new events exist.
+3. Event requests validate the JSONL records and return an array of events with `seq > after`, matching the viewer's `LongPollSource` contract, waiting up to the capped `wait` duration when no new events exist.
 4. The artifact server accepts only a lowercase SHA-256 digest path and verifies the blob through `ArtifactStore`; responses include a restrictive content security policy.
 5. `arena export --format static` writes the validated report bundle, then copies the already-built `web/dist` files into the export directory.
 

@@ -61,6 +61,37 @@ def test_api_refuses_cross_origin_post(tmp_path: Path) -> None:
         server.server_close()
 
 
+def test_registered_post_route_is_dispatched_after_origin_check(tmp_path: Path) -> None:
+    server = create_server("127.0.0.1", 0, tmp_path)
+    called: list[str] = []
+
+    def vote(handler, match: str) -> None:
+        called.append(match)
+        handler.send_json(201, {"vote": match})
+
+    register_route = server.register_route
+    register_route("POST", r"/api/votes/([A-Za-z0-9_-]+)", vote)
+    run(server)
+    try:
+        host, port = server.server_address[:2]
+        base = f"http://{host}:{port}"
+        status, body, _ = request(f"{base}/api/votes/pair-1", method="POST")
+        assert status == 201
+        assert json.loads(body) == {"vote": "pair-1"}
+        assert called == ["pair-1"]
+
+        status, _, _ = request(
+            f"{base}/api/votes/pair-2",
+            method="POST",
+            headers={"Origin": "https://foreign.example"},
+        )
+        assert status == 403
+        assert called == ["pair-1"]
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
 def test_long_poll_returns_events_after_cursor(tmp_path: Path) -> None:
     run_id = "run-example"
     run_dir = tmp_path / "runs" / run_id
@@ -81,7 +112,8 @@ def test_long_poll_returns_events_after_cursor(tmp_path: Path) -> None:
         host, port = server.server_address[:2]
         status, body, _ = request(f"http://{host}:{port}/api/runs/{run_id}/events?after=0&wait=0")
         assert status == 200
-        assert json.loads(body)["events"] == [event]
+        assert isinstance(json.loads(body), list)
+        assert json.loads(body) == [event]
     finally:
         server.shutdown()
         server.server_close()

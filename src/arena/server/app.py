@@ -16,6 +16,7 @@ from urllib.parse import parse_qs, unquote, urlsplit
 
 from arena.core.bundle import BundleError, build_bundle, default_home, open_run
 from arena.core.bundle_contract import validate_events_jsonl
+from arena.core.store import Store
 
 _RUN_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,127}\Z")
 
@@ -23,6 +24,8 @@ _RUN_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,127}\Z")
 class ArenaHTTPServer(ThreadingHTTPServer):
     daemon_threads = True
     allow_reuse_address = True
+    arena_routes: list[tuple[str, str, Callable[..., None]]]
+    register_route: Callable[[str, str, Callable[..., None]], None]
 
 
 def create_server(
@@ -144,6 +147,13 @@ def create_server(
             if off_box and not self.authenticated():
                 self.send_json(401, {"error": "sign in required"})
                 return
+            parsed = urlsplit(self.path)
+            path = unquote(parsed.path)
+            for method, pattern, callback in routes:
+                match = re.fullmatch(pattern, path)
+                if method == "POST" and match:
+                    callback(self, match.group(1) if match.groups() else "")
+                    return
             self.send_json(404, {"error": "not found"})
 
         def serve_artifact(self, path: str) -> None:
@@ -184,8 +194,6 @@ def create_server(
             if not db.exists():
                 handler.send_json(200, {"runs": []})
                 return
-            from arena.core.store import Store
-
             with Store(db) as store:
                 rows = store.execute(
                     "SELECT id, status, created_at FROM runs ORDER BY created_at DESC"
@@ -229,9 +237,7 @@ def create_server(
                 return
             selected = [row for row in rows if row["seq"] > after]
             if selected or time.monotonic() >= deadline:
-                handler.send_json(
-                    200, {"events": selected, "next": selected[-1]["seq"] if selected else after}
-                )
+                handler.send_json(200, selected)
                 return
             time.sleep(min(0.05, max(0, deadline - time.monotonic())))
 
