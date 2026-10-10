@@ -72,7 +72,11 @@ def export(
             shutil.rmtree(staging)
             try:
                 export_bundle(records, stats, staging, data_home)
-                export_viewer_assets(staging)
+                export_viewer_assets(
+                    staging,
+                    bundle=(staging / "bundle.json").read_bytes(),
+                    events=(staging / "events.jsonl").read_bytes(),
+                )
                 staging.rename(out)
             except BaseException:
                 shutil.rmtree(staging, ignore_errors=True)
