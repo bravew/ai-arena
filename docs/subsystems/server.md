@@ -16,7 +16,7 @@
 2. `serve` starts separate standard-library threaded HTTP servers. The viewer/API server serves `web/dist` when built and `/api/health`, `/api/runs`, `/api/runs/{id}/bundle`, and `/api/runs/{id}/events` routes.
 3. Event requests validate the JSONL records and return an array of events with `seq > after`, matching the viewer's `LongPollSource` contract, waiting up to the capped `wait` duration when no new events exist.
 4. The artifact server accepts only a lowercase SHA-256 digest path and verifies the blob through `ArtifactStore`; responses include a restrictive content security policy.
-5. `arena export --format static` writes the validated report bundle, then copies the already-built `web/dist` files into the export directory.
+5. `arena export --format static` writes the validated bundle and event log, copies the already-built `web/dist` tree, inlines its JavaScript and CSS into `index.html`, and embeds the run data as inert JSON for the viewer to validate and load.
 
 ## Constraints and failure behavior
 
@@ -24,7 +24,7 @@
 - Any non-auth POST carrying an `Origin` header returns 403. Unauthenticated remote POSTs return 401. GET on `/auth/sign-in` returns 405.
 - The gateway has no route or listener in this package; the separate artifact listener is loopback-only when the viewer/API is bound off-box.
 - Run IDs and artifact digests are constrained before filesystem access. Event parse/schema failures return an error and are not reported as an empty event stream.
-- Static packaging needs a prebuilt `web/dist`. The current shell hardcodes the fixture bundle and Live remains a placeholder, so this server issue cannot provide a run-specific viewer or Live replay from `file://` without changes to web-owned files. `--format static` reports the precise missing-assets/build condition instead of fabricating viewer behavior.
+- Static packaging needs a prebuilt `web/dist` containing the expected Vite module and stylesheet tags. The exporter inlines those assets and embeds run data in inert JSON so opening `index.html` from `file://` does not fetch adjacent files. The viewer uses hash routing and validates both the embedded bundle and event stream; Live replays that run's events. Missing or malformed embedded data is reported as a validation/load error. `--format static` reports missing viewer assets and removes its staging directory on failure.
 - The server uses only the Python standard library and existing bundle/storage code.
 
 ## Verification
