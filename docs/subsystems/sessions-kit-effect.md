@@ -4,7 +4,7 @@
 
 | Part | Responsibility | Source |
 | --- | --- | --- |
-| Sessions list and timeline | Filter sessions by applied kit and show turn usage, calls, tools, MCP calls, skill events, file changes, and partial status | [`SessionsView`](../../web/src/views/sessions/SessionsView.tsx), [`getSessionRows`](../../web/src/views/sessions/session-data.ts) |
+| Sessions list, timeline, and comparison | Filter sessions by applied kit, show turn usage, calls, tools, MCP calls, skill events, file changes, and partial status; compare same-task sessions aligned by turn | [`SessionsView`](../../web/src/views/sessions/SessionsView.tsx), [`getSessionRows`](../../web/src/views/sessions/session-data.ts), [`alignSessionTurns`](../../web/src/views/sessions/session-data.ts) |
 | Turn usage | Sum gateway call token fields and known costs from each turn's call IDs; unknown call cost remains unavailable | [`getTurnMetrics`](../../web/src/views/sessions/session-data.ts) |
 | Kit effect pairing | Compare scored kit trials only with a unique, same-run/task baseline whose model, agent and non-kit configuration match | [`buildPairs`](../../web/src/views/kit-effect/kit-effect-data.ts) |
 | Kit effect display | Show paired score and cost differences, observed skill uptake, and label the invoked/not-invoked split as observational | [`KitEffectView`](../../web/src/views/kit-effect/KitEffectView.tsx) |
@@ -13,7 +13,7 @@
 
 1. The app validates the imported bundle and supplies the validated value to the route components through [`App`](../../web/src/app/App.tsx).
 2. `SessionsView` derives rows by joining sessions to trials and contestants, and associates turn call IDs with the gateway calls in the bundle.
-3. The kit filter uses `KitInstall.kit_hash`, falling back to `No kit` when a trial has no install record. Selecting a session renders its turns and event markers.
+3. The kit filter uses `KitInstall.kit_hash`, falling back to `No kit` when a trial has no install record. Selecting a session renders its turns and event markers. The same-task comparison selector displays both sessions on shared turn-number rows; a missing turn on either side is labeled explicitly.
 4. `KitEffectView` visits kit-installed trials and finds baseline candidates in the same run, task, and attempt. It requires exactly one baseline, a `none` kit identity, and matching model, scaffold ID and version, prompt mode, orchestration, prompt version, model parameters, scaffold settings, and hooks. A baseline can be used by only one pair; ambiguous or unmatched candidates are omitted.
 5. The view averages normalized score rows for each paired trial and sums costs only when every associated call has a known cost. It displays the observational skill-use split without implying causal effect.
 

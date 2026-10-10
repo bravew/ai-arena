@@ -40,6 +40,14 @@ export function getTurnMetrics(bundle: Bundle, callIds: string[]) {
   };
 }
 
+export function alignSessionTurns(left: Session, right: Session) {
+  return Array.from({ length: Math.max(left.turns.length, right.turns.length) }, (_, index) => ({
+    turn: index + 1,
+    left: left.turns[index],
+    right: right.turns[index],
+  }));
+}
+
 export function kitLabel(bundle: Bundle, trialId: string): string {
   const install = bundle.kit_installs.find((item) => item.trial_id === trialId);
   return install?.kit_hash ?? 'No kit';
