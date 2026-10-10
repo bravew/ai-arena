@@ -8,7 +8,13 @@ test('ops shows ledger filters, usage and latency charts, lanes, meters and hook
   await expect(page.getByRole('img', { name: 'Token usage series' })).toBeVisible();
   await expect(page.getByRole('img', { name: 'Latency series' })).toBeVisible();
   await expect(page.getByRole('heading', { name: 'Provider lanes' })).toBeVisible();
-  await expect(page.getByText('anthropic/main')).toBeVisible();
+  const activeLane = page.locator('.lane-row').filter({ hasText: 'anthropic/main' });
+  await expect(activeLane).toContainText('1 in-flight / 4 limit');
+  await expect(activeLane).toContainText('2 queued');
+  const restingLane = page.locator('.lane-row').filter({ hasText: 'openai/main' });
+  await expect(restingLane).toContainText('Rest · rate_limit');
+  await expect(restingLane).toContainText('0 in-flight / 2 limit');
+  await expect(page.getByRole('row', { name: /anthropic-max.*claude-opus-5-5.*200/ })).toBeVisible();
   await expect(page.getByRole('heading', { name: 'Subscription meters' })).toBeVisible();
   await expect(page.getByText('weekly usage')).toBeVisible();
   await expect(page.getByRole('heading', { name: 'Hook stats' })).toBeVisible();
