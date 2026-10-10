@@ -15,9 +15,9 @@ def render_summary(status: str, run_url: str) -> str:
     lines.extend(
         [
             "",
-            "The current branch runs smoke suite validation and oracle/null self-checks. "
-            "Cassette replay through the gateway and runner will run once CP2 and CP3 "
-            "are integrated.",
+            "This job validates the committed smoke inputs and checks oracle/null "
+            "self-test behavior. No cassette replay was performed: this branch does "
+            "not include a runnable arena gateway and runner.",
             "",
         ]
     )
