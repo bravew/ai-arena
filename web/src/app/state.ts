@@ -1,10 +1,12 @@
 import { useContext } from 'react';
 import { createContext } from 'react';
-import type { Bundle, SchemaIssue, Validated } from '../lib/schema';
+import type { Bundle, RunEvent, SchemaIssue, Validated } from '../lib/schema';
 
 export interface BundleState {
   bundle: Bundle | undefined;
   validation: Validated<Bundle> | undefined;
+  events: RunEvent[] | undefined;
+  loadEvents: (input: unknown) => void;
   loadBundle: (input: unknown) => void;
   setLoadError: (message: string) => void;
 }
