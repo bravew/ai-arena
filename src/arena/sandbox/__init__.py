@@ -1,3 +1,4 @@
+from arena.sandbox.agent_box import DockerAgentBox
 from arena.sandbox.docker import (
     DockerSandbox,
     SandboxContainer,
@@ -7,6 +8,7 @@ from arena.sandbox.docker import (
 )
 
 __all__ = [
+    "DockerAgentBox",
     "DockerSandbox",
     "SandboxContainer",
     "SandboxError",
