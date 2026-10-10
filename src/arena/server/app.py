@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import hmac
+import ipaddress
 import json
 import re
 import secrets
@@ -12,6 +13,7 @@ import time
 from collections.abc import Callable
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+from typing import cast
 from urllib.parse import parse_qs, unquote, urlsplit
 
 from arena.core.bundle import BundleError, build_bundle, default_home, open_run
@@ -35,12 +37,20 @@ def create_server(
     *,
     run_key: str | None = None,
     artifacts: bool = False,
+    trusted_proxy: str | None = None,
 ) -> ArenaHTTPServer:
     """Create a server instance; ``serve_forever`` starts it for real."""
     data_home = home or default_home()
     off_box = host not in {"127.0.0.1", "localhost", "::1"}
     if off_box and not run_key:
         raise ValueError("binding off-box requires ARENA_RUN_KEY")
+    if off_box and not trusted_proxy:
+        raise ValueError("off-box binding requires a trusted TLS-terminating proxy")
+    if trusted_proxy is not None:
+        try:
+            trusted_proxy = str(ipaddress.ip_address(trusted_proxy))
+        except ValueError as error:
+            raise ValueError("trusted proxy must be an IP address") from error
     secret = secrets.token_bytes(32)
     routes: list[tuple[str, str, Callable[..., None]]] = []
 
@@ -89,25 +99,22 @@ def create_server(
             expected = hmac.new(secret, (run_key or "").encode(), hashlib.sha256).hexdigest()
             return bool(cookie) and hmac.compare_digest(cookie, expected)
 
+        def request_is_https(self) -> bool:
+            if not off_box:
+                return True
+            return bool(
+                trusted_proxy
+                and self.client_address[0] == trusted_proxy
+                and self.headers.get("X-Forwarded-Proto", "").lower() == "https"
+            )
+
         def do_GET(self) -> None:
             parsed = urlsplit(self.path)
             path = unquote(parsed.path)
             if path == "/auth/sign-in":
-                key = parse_qs(parsed.query).get("key", [""])[0]
-                if not run_key or not hmac.compare_digest(key, run_key):
-                    self.send_json(401, {"error": "invalid run key"})
-                    return
-                token = hmac.new(secret, run_key.encode(), hashlib.sha256).hexdigest()
-                self.send_bytes(
-                    302,
-                    b"",
-                    headers={
-                        "Location": "/",
-                        "Set-Cookie": f"arena_session={token}; HttpOnly; SameSite=Strict; Path=/",
-                    },
-                )
+                self.send_json(405, {"error": "use POST to sign in"}, {"Allow": "POST"})
                 return
-            if path != "/auth/sign-in" and off_box and not self.authenticated():
+            if off_box and not self.authenticated():
                 self.send_json(401, {"error": "sign in required"}, {"WWW-Authenticate": "Arena"})
                 return
             if artifacts:
@@ -141,6 +148,45 @@ def create_server(
             )
 
         def do_POST(self) -> None:
+            parsed = urlsplit(self.path)
+            path = unquote(parsed.path)
+            if path == "/auth/sign-in":
+                if self.headers.get("Origin"):
+                    self.send_json(403, {"error": "cross-origin sign-in is refused"})
+                    return
+                if not off_box:
+                    self.send_json(404, {"error": "not found"})
+                    return
+                if not self.request_is_https():
+                    self.send_json(400, {"error": "TLS is required for sign in"})
+                    return
+                try:
+                    length = int(self.headers.get("Content-Length", "0"))
+                    if length <= 0 or length > 4096:
+                        raise ValueError("invalid body size")
+                    payload = cast(object, json.loads(self.rfile.read(length)))
+                    key = (
+                        cast(dict[str, object], payload).get("key")
+                        if isinstance(payload, dict)
+                        else None
+                    )
+                except (ValueError, json.JSONDecodeError):
+                    self.send_json(400, {"error": "invalid sign-in request"})
+                    return
+                if not isinstance(key, str) or not run_key or not hmac.compare_digest(key, run_key):
+                    self.send_json(401, {"error": "invalid run key"})
+                    return
+                token = hmac.new(secret, run_key.encode(), hashlib.sha256).hexdigest()
+                self.send_bytes(
+                    204,
+                    b"",
+                    headers={
+                        "Set-Cookie": (
+                            f"arena_session={token}; HttpOnly; Secure; SameSite=Strict; Path=/"
+                        ),
+                    },
+                )
+                return
             if self.headers.get("Origin"):
                 self.send_json(403, {"error": "cross-origin writes are refused"})
                 return
@@ -254,9 +300,10 @@ def serve(
     artifact_port: int = 7402,
     home: Path | None = None,
     run_key: str | None = None,
+    trusted_proxy: str | None = None,
 ) -> None:
     """Run viewer/API and artifact servers on separate ports."""
-    api = create_server(host, port, home, run_key=run_key)
+    api = create_server(host, port, home, run_key=run_key, trusted_proxy=trusted_proxy)
     artifact_host = "127.0.0.1" if host not in {"127.0.0.1", "localhost", "::1"} else host
     artifact_server = create_server(
         artifact_host, artifact_port, home, run_key=run_key, artifacts=True
