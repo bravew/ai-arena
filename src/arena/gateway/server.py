@@ -16,10 +16,12 @@ import logging
 import time
 import zlib
 from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Callable, Mapping
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, suppress
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from typing import Any, Protocol, cast
 
+import anyio
 import zstandard
 from starlette.applications import Starlette
 from starlette.datastructures import Headers
@@ -29,7 +31,7 @@ from starlette.responses import JSONResponse, Response, StreamingResponse
 from starlette.routing import Route
 
 from arena.catalog.config import ModelCatalog
-from arena.core.models import Call, Tokens
+from arena.core.models import Call, RunEvent, Tokens
 from arena.gateway.auth import Caller, Purpose, authenticate
 from arena.gateway.budget import Budget, BudgetExceeded
 from arena.gateway.lanes import KeyLane, LanePermit, LanePool, LanePoolFull, LaneRejected
@@ -368,7 +370,9 @@ async def _protocol(request: Request) -> Response:
         if state.dispatcher is None:
             result_status = 501
             return _error(result_status, "not_implemented", "protocol relay is not configured")
-        if state.translator is None:
+        source_protocol = _request_protocol(request)
+        target_protocol = _target_protocol(target)
+        if state.translator is None and source_protocol != target_protocol:
             result_status = 503
             return _error(
                 result_status, "relay_unavailable", "protocol translation is not configured"
@@ -408,8 +412,18 @@ async def _protocol(request: Request) -> Response:
                     result_status, "budget_exceeded", "call exceeds the configured run budget"
                 )
 
-        source_protocol = _request_protocol(request)
-        target_protocol = _target_protocol(target)
+        request_payload = cast(dict[str, Any], payload)
+        streaming = bool(
+            request_payload.get("stream")
+        ) or "text/event-stream" in request.headers.get("accept", "")
+        keepalive_chunks: asyncio.Queue[bytes] = asyncio.Queue(maxsize=1)
+
+        async def keepalive() -> None:
+            if not streaming:
+                return
+            with suppress(asyncio.QueueFull):
+                keepalive_chunks.put_nowait(b": keep-alive\n\n")
+
         lane_key = f"{target.provider.id}/main"
         try:
             lane = state.lanes.for_key(lane_key)
@@ -429,13 +443,6 @@ async def _protocol(request: Request) -> Response:
                 "gateway lane pool is full; retry after capacity is freed",
             )
 
-        async def keepalive() -> None:
-            await asyncio.sleep(0)
-
-        request_payload = cast(dict[str, Any], payload)
-        streaming = bool(
-            request_payload.get("stream")
-        ) or "text/event-stream" in request.headers.get("accept", "")
         try:
             permit = await lane.acquire(streaming=streaming, keepalive=keepalive)
         except LaneRejected as exc:
@@ -472,7 +479,7 @@ async def _protocol(request: Request) -> Response:
                     effort_mapping=state.effort_mapping,
                     structured_output_mapper=state.structured_output_mapper,
                 ),
-                translator=state.translator,
+                translator=state.translator or _unconfigured_translator,
             )
         except TranslationError as exc:
             if reservation is not None:
@@ -520,6 +527,28 @@ async def _protocol(request: Request) -> Response:
                 )
                 if state.ledger is not None:
                     state.ledger.record(final_call)
+                if state.events is not None:
+                    await state.events.append(
+                        RunEvent(
+                            seq=0,
+                            ts=datetime.now(UTC),
+                            run_id=final_call.run_id,
+                            kind="call_finished",
+                            ref=final_call.id,
+                            data={
+                                "trial_id": final_call.trial_id,
+                                "status": final_call.status,
+                                "provider": final_call.provider,
+                                "model_asked": final_call.model_asked,
+                                "model_served": final_call.model_served,
+                                "translated": final_call.translated,
+                                "tokens": final_call.tokens.model_dump(mode="json"),
+                                "cost_usd": final_call.cost_usd,
+                                "queue_ms": final_call.queue_ms,
+                                "total_ms": final_call.total_ms,
+                            },
+                        )
+                    )
                 if state.exporter is not None:
                     state.exporter.submit_call(final_call)
             if reservation is not None:
@@ -562,12 +591,50 @@ async def _protocol(request: Request) -> Response:
             )
 
         async def response_stream() -> AsyncIterator[bytes]:
-            sent = False
             stream_status = upstream.status_code
+            sent = False
+            upstream_chunks = upstream.body.__aiter__()
+            next_chunk = asyncio.create_task(_next_stream_chunk(upstream_chunks))
+            keepalive_ready: asyncio.Task[bytes] | None = None
             try:
-                async for chunk in upstream.body:
-                    sent = sent or bool(chunk)
-                    yield chunk
+                while True:
+                    keepalive_ready = asyncio.create_task(keepalive_chunks.get())
+                    done, _ = await asyncio.wait(
+                        {next_chunk, keepalive_ready}, return_when=asyncio.FIRST_COMPLETED
+                    )
+                    if keepalive_ready in done:
+                        keepalive_chunk = keepalive_ready.result()
+                        sent = sent or bool(keepalive_chunk)
+                        yield keepalive_chunk
+                        keepalive_ready = None
+                        continue
+                    if next_chunk in done:
+                        chunk = next_chunk.result()
+                        if chunk is None:
+                            if keepalive_ready.done():
+                                keepalive_chunk = keepalive_ready.result()
+                                sent = sent or bool(keepalive_chunk)
+                                yield keepalive_chunk
+                            else:
+                                keepalive_ready.cancel()
+                                await asyncio.gather(keepalive_ready, return_exceptions=True)
+                            break
+                        sent = sent or bool(chunk)
+                        yield chunk
+                        next_chunk = asyncio.create_task(_next_stream_chunk(upstream_chunks))
+                        if keepalive_ready.done():
+                            keepalive_chunk = keepalive_ready.result()
+                            sent = sent or bool(keepalive_chunk)
+                            yield keepalive_chunk
+                        else:
+                            keepalive_ready.cancel()
+                            await asyncio.gather(keepalive_ready, return_exceptions=True)
+                        keepalive_ready = None
+                        continue
+                    keepalive_chunk = keepalive_ready.result()
+                    sent = sent or bool(keepalive_chunk)
+                    yield keepalive_chunk
+                    keepalive_ready = None
             except asyncio.CancelledError:
                 stream_status = 499
                 raise
@@ -576,18 +643,18 @@ async def _protocol(request: Request) -> Response:
                 logger.warning("upstream stream failed after response began")
                 raise
             finally:
-                if not sent and stream_status == upstream.status_code:
-                    stream_status = 502
-                finalize_task = asyncio.create_task(finalize(stream_status, upstream.tokens))
-                try:
-                    await asyncio.shield(finalize_task)
-                except asyncio.CancelledError:
-                    await finalize_task
-                    raise
-                except Exception:
-                    logger.exception("failed to finalize gateway call")
-                finally:
-                    record_metrics(stream_status)
+                with anyio.CancelScope(shield=True):
+                    try:
+                        if not sent and stream_status == upstream.status_code:
+                            stream_status = 502
+                        await _cleanup_stream(
+                            upstream_chunks,
+                            next_chunk,
+                            keepalive_ready,
+                            finalize(stream_status, upstream.tokens),
+                        )
+                    finally:
+                        record_metrics(stream_status)
 
         result_status = upstream.status_code
         response_headers = {
@@ -620,6 +687,45 @@ async def _protocol(request: Request) -> Response:
                 await asyncio.shield(reservation.release())
                 reservation = None
             record_metrics(result_status)
+
+
+async def _next_stream_chunk(stream: AsyncIterator[bytes]) -> bytes | None:
+    try:
+        return await anext(stream)
+    except StopAsyncIteration:
+        return None
+
+
+async def _cleanup_stream(
+    stream: AsyncIterator[bytes],
+    next_chunk: asyncio.Task[bytes | None],
+    keepalive_ready: asyncio.Task[bytes] | None,
+    finalize_call: Awaitable[None],
+) -> None:
+    tasks = (next_chunk, keepalive_ready)
+    for task in tasks:
+        if task is not None and not task.done():
+            task.cancel()
+    await asyncio.gather(*(task for task in tasks if task is not None), return_exceptions=True)
+    try:
+        close = getattr(stream, "aclose", None)
+        if close is not None:
+            await close()
+    except Exception:
+        logger.warning("failed to close upstream stream")
+    try:
+        await finalize_call
+    except Exception:
+        logger.exception("failed to finalize gateway call")
+
+
+def _unconfigured_translator(
+    source_protocol: str, target_protocol: str, payload: Mapping[str, Any]
+) -> Mapping[str, Any]:
+    """Fail closed if a cross-protocol call reaches relay preparation unconfigured."""
+    raise TranslationError(
+        f"protocol translation from {source_protocol} to {target_protocol} is not configured"
+    )
 
 
 def _request_protocol(request: Request) -> str:
