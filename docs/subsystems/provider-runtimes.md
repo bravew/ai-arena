@@ -16,7 +16,7 @@ commands were run. No model call was made.
 | CLI specs | Per CLI: binary name, path override variable, minimum version, status commands and how their output is parsed | [`specs.py`](../../src/arena/providers/runtimes/specs.py) |
 | Detection | Find the binary, read the version and sign-in state, build the child environment, check a model against the CLI's list | [`detect.py`](../../src/arena/providers/runtimes/detect.py) |
 | Output | `providers detect [--json]`, the `local-cli` branch of `providers test`, the CLI lines in `doctor` | [`cli_providers.py`](../../src/arena/cli_providers.py) |
-| Provider runner (later sub-issues) | Run a trial through the CLI | built on these fixtures |
+| Run integration | `arena run` preflight, routing, per-account lane and rest for `local-cli` contestants | [`local_cli_trial.py`](../../src/arena/runners/local_cli_trial.py), [`cli_run.py`](../../src/arena/cli_run.py) |
 
 ## Runtime path
 
@@ -80,6 +80,17 @@ A `local-cli` trial has no gateway in its path, so the arena records only what t
 3. **Only `call_finished`.** The CLI's usage is known after it exits, so there is no earlier `call_queued` or `call_started` event. The gateway does not emit `call_queued` either.
 4. **Reached.** A trial counts as reached only when the CLI exited cleanly, reported usage, and the served model was verified. A Codex run whose session record was missing is recorded with `model_served` null and is not reached. Every other outcome is recorded as a failed call (429 `subscription_limit`, 401 `auth`, `timeout`, `model_refused` for a model mismatch, `upstream`, `bad_reply`). A spawn failure made no model request and records nothing.
 5. **Budget.** The call is reserved at zero and settled as a subscription call, so its tokens add to `subscription_tokens` and never to the metered spend or the US$20 cap.
+
+### Running subscription contestants
+
+`arena run` sends a contestant to the vendor CLI when its model's provider has `subscription.runtime: local-cli`. Mock, API-agent and CLI contestants can share one run.
+
+1. **Preflight.** [`preflight_local_cli`](../../src/arena/runners/local_cli_trial.py) runs before any trial, also under `--dry-run`, and makes no model request. Each unmet condition is its own line with a code: `provider_disabled`, `scaffold`, `catalog`, `not_installed`, `auth_required`, `incompatible_version`, `unsupported_model` and `sign_in`. Any issue exits with code 2 and nothing is written.
+2. **No scaffold.** The vendor CLI is the agent, so a CLI contestant takes no scaffold, and the model must be a `pricing: subscription` catalog entry.
+3. **Terms.** Per D4 no acknowledgement is stored. The run prints one note that subscription trials use the plan's quota under the vendor's terms and that the arena charges no price for them.
+4. **Execution.** The trial runs the CLI in a scratch home and workspace, keeps its outputs as the trial's artifacts (`answer.md` falls back to the final message), then records usage as in the section above. A failure raises, the trial is `errored`, and `--resume` runs it again. A trial never switches model or runtime.
+5. **Lane and rest.** `provider.limits.concurrency` (default 1) caps the trials in flight on one account, through the scheduler's `lane_for`. A `subscription_limit` result rests the provider in a `RestBook` for the rest of the run, and later trials on it fail at once instead of spending quota. Resuming starts with an empty book.
+6. **Events and sequence numbers.** The gateway container owns `events.jsonl` while it runs, so CLI trials write `call_finished` events to a private root and the recorder merges them when the run ends. `calls` is unique on `(run_id, seq)`, so CLI calls are numbered from 1,000,000 up, after the highest existing number on a resume.
 
 ## Constraints and failure behavior
 

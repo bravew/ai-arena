@@ -3,6 +3,10 @@
 from __future__ import annotations
 
 import asyncio
+import itertools
+import os
+import shutil
+import tempfile
 from collections.abc import Sequence
 from pathlib import Path
 from typing import Annotated, Any, cast
@@ -19,14 +23,29 @@ from arena.core.modelref import ModelRef
 from arena.core.models import Contestant, Score, Task
 from arena.core.store import Store
 from arena.gateway.auth import token_for_trial
+from arena.gateway.budget import Budget
+from arena.gateway.rests import RestBook
 from arena.judges.client import HttpJudgeTransport, JudgeTransport, WireProtocol
 from arena.kits.matrix import expand_matrix
-from arena.providers.config import load_providers, parse_yaml
+from arena.obs.events import EventLog
+from arena.obs.ledger import CallsLedger
+from arena.providers.accounts import AccountStore
+from arena.providers.config import Provider, load_providers, parse_yaml
 from arena.runners.agent_trial import adapter_for, execute_agent_trial
 from arena.runners.completion import CompletionResult, mock_completion
+from arena.runners.local_cli_trial import (
+    LocalCliRun,
+    LocalCliTrialError,
+    execute_local_cli_trial,
+    next_cli_seq,
+    preflight_local_cli,
+    provider_concurrency,
+    read_staged_events,
+)
 from arena.runners.metered_gateway import GatewayContainer, GatewayRuntimeError, RunGateway
 from arena.runners.run_record import RunRecorder, contestant_snapshot
 from arena.runners.scheduler import TrialJob, expand_jobs, run_jobs
+from arena.runners.usage_capture import CaptureError, UsageCapture
 from arena.scorers.base import Scorer, ScorerContext, ScorerError, validate_score
 from arena.scorers.docker_sandbox import docker_sandbox_factory, image_for_command
 from arena.scorers.execution import SandboxFactory
@@ -81,6 +100,20 @@ def _contestants(paths: list[str]) -> list[Contestant]:
     if len(ids) != len(set(ids)):
         raise ValueError("contestant arguments expand to duplicate contestants")
     return expanded
+
+
+def _local_cli_providers(contestants: Sequence[Contestant], path: Path) -> dict[str, Provider]:
+    """The providers these contestants use that a vendor CLI serves (`runtime: local-cli`)."""
+    wanted = {c.model.provider for c in contestants if c.model.provider != "mock"}
+    if not wanted:
+        return {}
+    return {
+        provider.id: provider
+        for provider in load_providers(path).providers
+        if provider.id in wanted
+        and provider.subscription is not None
+        and provider.subscription.runtime == "local-cli"
+    }
 
 
 def _catalog_models(path: Path) -> dict[str, CatalogModel]:
@@ -260,23 +293,54 @@ def run(
         "repeats": repeats,
     }
     run_id = resume_id or content_id(run_config)
+    try:
+        cli_providers = _local_cli_providers(expanded, providers)
+    except (OSError, ValueError, yaml.YAMLError) as error:
+        if not dry_run:
+            typer.echo(f"error: cannot read {providers}: {error}", err=True)
+            raise typer.Exit(code=2) from error
+        cli_providers = {}
+
+    def served_by_api(job: TrialJob) -> bool:
+        provider = job.contestant.model.provider
+        return provider != "mock" and provider not in cli_providers
+
     non_mock = sorted(
         {
             contestant.model.provider
             for contestant in expanded
             if contestant.model.provider != "mock"
+            and contestant.model.provider not in cli_providers
         }
     )
     non_mock_jobs = [
-        job
-        for job in jobs
-        if job.contestant.model.provider != "mock" and job.contestant.scaffold is not None
+        job for job in jobs if served_by_api(job) and job.contestant.scaffold is not None
     ]
     completion_jobs = [
-        job
-        for job in jobs
-        if job.contestant.model.provider != "mock" and job.contestant.scaffold is None
+        job for job in jobs if served_by_api(job) and job.contestant.scaffold is None
     ]
+    cli_jobs = [job for job in jobs if job.contestant.model.provider in cli_providers]
+    accounts = AccountStore((home or Path.home() / ".arena") / "accounts")
+    if cli_jobs:
+        issues = [
+            issue
+            for contestant in {job.contestant.id: job.contestant for job in cli_jobs}.values()
+            for issue in preflight_local_cli(
+                contestant,
+                cli_providers[contestant.model.provider],
+                models,
+                accounts,
+                os.environ,
+            )
+        ]
+        if issues:
+            for issue in issues:
+                typer.echo(f"error: {issue.contestant}: {issue.message} [{issue.code}]", err=True)
+            raise typer.Exit(code=2)
+        typer.echo(
+            "note: subscription trials use your plan's quota under the vendor's terms; "
+            "the arena charges no price for them"
+        )
     if completion_jobs and not dry_run:
         for job in completion_jobs:
             model = models.get(str(job.contestant.model))
@@ -475,6 +539,45 @@ def run(
                     else:
                         executor = execute
 
+                    stage: Path | None = None
+                    if cli_jobs:
+                        # The gateway container owns events.jsonl while it runs, so CLI trials
+                        # write to a private root that is merged in once the run has ended.
+                        stage = Path(tempfile.mkdtemp(prefix="arena-cli-events-"))
+                        catalog_data = load_catalog(catalog)
+                        sequence = itertools.count(next_cli_seq(store, run_id))
+                        shared = LocalCliRun(
+                            store=store,
+                            artifacts=artifact_store,
+                            capture=UsageCapture(
+                                CallsLedger(store, catalog_data),
+                                EventLog(stage),
+                                Budget(min(budget_usd or 20.0, 20.0)),
+                                catalog_data,
+                                lambda: next(sequence),
+                            ),
+                            accounts=accounts,
+                            environ=os.environ,
+                            rests=RestBook(),
+                        )
+                        dispatch_api = executor
+
+                        async def execute_routed(job: TrialJob) -> CompletionResult:
+                            provider = cli_providers.get(job.contestant.model.provider)
+                            if provider is None:
+                                return await dispatch_api(job)
+                            return await execute_local_cli_trial(
+                                job, run_id, shared, provider, task_prompts[job.task.id]
+                            )
+
+                        executor = execute_routed
+
+                    def lane(job: TrialJob) -> tuple[str, int] | None:
+                        provider = cli_providers.get(job.contestant.model.provider)
+                        if provider is None:
+                            return None
+                        return provider.id, provider_concurrency(provider)
+
                     def built(task: Task) -> TaskScorers:
                         return task_scorers(
                             task,
@@ -528,17 +631,27 @@ def run(
                                 per_contestant=(
                                     1 if gateway_container is not None else per_contestant
                                 ),
+                                lane_for=lane,
                             )
                         )
                         run_status = "succeeded"
                     finally:
+                        if stage is not None:
+                            recorder.adopt(read_staged_events(stage, run_id))
+                            shutil.rmtree(stage, ignore_errors=True)
                         recorder.emit("run_finished", status=run_status)
             finally:
                 if gateway_container is not None:
                     gateway_container.stop()
                 if recorder.pending:
                     recorder.write(db.parent)
-        except (OSError, ValueError, GatewayRuntimeError) as error:
+        except (
+            OSError,
+            ValueError,
+            GatewayRuntimeError,
+            LocalCliTrialError,
+            CaptureError,
+        ) as error:
             typer.echo(f"error: agent run failed before completion: {error}", err=True)
             raise typer.Exit(code=2) from error
     typer.echo(

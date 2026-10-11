@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 from pathlib import Path
 
+import pytest
 from typer.testing import CliRunner
 
 from arena.cli import app
@@ -10,7 +11,7 @@ from arena.core.modelref import ModelRef
 from arena.core.models import Contestant, Task
 from arena.core.store import Store
 from arena.runners.completion import CompletionResult
-from arena.runners.scheduler import SubscriptionRest, TrialJob, run_jobs
+from arena.runners.scheduler import SubscriptionRest, TrialJob, expand_jobs, run_jobs
 
 
 def contestant(name: str = "echo") -> Contestant:
@@ -246,3 +247,41 @@ def test_subscription_rest_holds_jobs_and_emits_countdown() -> None:
     )
     assert result.completed == 1
     assert events == [("account-a", 3)]
+
+
+def test_lane_limits_jobs_that_share_an_account() -> None:
+    running = peak = 0
+
+    async def dispatch(_job: TrialJob) -> CompletionResult:
+        nonlocal running, peak
+        running += 1
+        peak = max(peak, running)
+        await asyncio.sleep(0.01)
+        running -= 1
+        return CompletionResult(text="ok")
+
+    jobs = expand_jobs([task()], [contestant("a"), contestant("b"), contestant("c")], 2)
+
+    summary = asyncio.run(
+        run_jobs(
+            None,
+            "lane",
+            jobs,
+            dispatch,
+            lane_for=lambda job: ("account", 1),
+            per_contestant=2,
+        )
+    )
+
+    assert summary.completed == 6
+    assert peak == 1
+
+
+def test_lane_limit_must_be_positive() -> None:
+    async def dispatch(_job: TrialJob) -> CompletionResult:
+        return CompletionResult(text="ok")
+
+    jobs = expand_jobs([task()], [contestant("a")], 1)
+
+    with pytest.raises(ValueError, match="lane limits"):
+        asyncio.run(run_jobs(None, "lane", jobs, dispatch, lane_for=lambda job: ("account", 0)))
