@@ -16,6 +16,8 @@ commands were run. No model call was made.
 | CLI specs | Per CLI: binary name, path override variable, minimum version, status commands and how their output is parsed | [`specs.py`](../../src/arena/providers/runtimes/specs.py) |
 | Detection | Find the binary, read the version and sign-in state, build the child environment, check a model against the CLI's list | [`detect.py`](../../src/arena/providers/runtimes/detect.py) |
 | Output | `providers detect [--json]`, the `local-cli` branch of `providers test`, the CLI lines in `doctor` | [`cli_providers.py`](../../src/arena/cli_providers.py) |
+| Viewer status | Provider runtime, CLI, version and sign-in status; redacted account metadata and env variable names only | [`providers_api.py`](../../src/arena/server/providers_api.py), [`ProvidersView.tsx`](../../web/src/views/providers/ProvidersView.tsx) |
+| Viewer test | Explicit one-call connection test; rate-limited per provider and recorded for local CLI | [`providers_api.py`](../../src/arena/server/providers_api.py) |
 | Run integration | `arena run` preflight, routing, per-account lane and rest for `local-cli` contestants | [`local_cli_trial.py`](../../src/arena/runners/local_cli_trial.py), [`cli_run.py`](../../src/arena/cli_run.py) |
 
 ## Runtime path
