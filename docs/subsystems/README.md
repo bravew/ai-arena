@@ -23,6 +23,7 @@ Subsystem references are added alongside the code they describe; see
 | [`sessions-kit-effect.md`](sessions-kit-effect.md) | Sessions timelines and paired kit-effect comparisons |
 | [`ops-view.md`](ops-view.md) | The Ops view: calls ledger, usage, lanes, meters and hook stats |
 | [`viewer-live.md`](viewer-live.md) | The viewer and the Live stage |
+| [`importers.md`](importers.md) | Inspect, Harbor, and promptfoo result import and bundle export |
 
 ## Page template
 
