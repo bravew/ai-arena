@@ -100,7 +100,11 @@ class Budget:
                 + sum(reserved_amount for reserved_amount, _ in self._reserved.values())
                 + amount
             )
-            if self._over_cap or proposed_spend > self.cap_usd:
+            if (
+                self._over_cap
+                or (self._metered_spend >= self.cap_usd and not subscription)
+                or proposed_spend > self.cap_usd
+            ):
                 spent = self._metered_spend
                 await events.append(
                     RunEvent(

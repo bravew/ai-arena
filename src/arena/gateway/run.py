@@ -3,8 +3,9 @@
 from __future__ import annotations
 
 import argparse
+import asyncio
 import threading
-from collections.abc import Sequence
+from collections.abc import Mapping
 from pathlib import Path
 from typing import cast
 
@@ -28,20 +29,21 @@ class RunContextProvider:
     """Allocate unique, run-attributed call identities for trial tokens."""
 
     def __init__(
-        self, run_id: str, trial_ids: Sequence[str], account_id: str = "provider-account"
+        self,
+        run_id: str,
+        trial_models: Mapping[str, str],
+        account_id: str = "provider-account",
     ) -> None:
-        if not run_id or not account_id or not trial_ids:
+        if not run_id or not account_id or not trial_models:
             raise ValueError("run and account IDs and at least one trial are required")
-        if len(set(trial_ids)) != len(trial_ids):
-            raise ValueError("trial IDs must be unique")
         if run_id in {"ops"} or run_id.startswith("judge-"):
             raise ValueError("run ID collides with a reserved gateway identity")
         token_for_trial(run_id)
         self.run_id = run_id
         self.account_id = account_id
-        for trial_id in trial_ids:
+        for trial_id in trial_models:
             token_for_trial(trial_id)
-        self.trial_ids = frozenset(trial_ids)
+        self.trial_models = dict(trial_models)
         self._catalog: ModelCatalog | None = None
         self._contexts: dict[str, CallContext] = {}
         self._sequence = 0
@@ -54,10 +56,13 @@ class RunContextProvider:
         if getattr(caller, "purpose", None) is not Purpose.TRIAL:
             return None
         trial_id = getattr(caller, "trial_id", None)
-        if trial_id not in self.trial_ids:
+        if not isinstance(trial_id, str):
+            return None
+        caller_model = self.trial_models.get(trial_id)
+        if caller_model is None:
             return None
         model_ref = getattr(target, "catalog_ref", None)
-        if not isinstance(model_ref, str):
+        if not isinstance(model_ref, str) or caller_model != model_ref:
             return None
         if self._catalog is None:
             return None
@@ -72,7 +77,7 @@ class RunContextProvider:
                 account_id=self.account_id,
                 call_id=f"{self.run_id}-{sequence}",
                 seq=sequence,
-                cost_usd=None,
+                cost_usd=0.0,
                 price_version=self._catalog.price_version,
             )
             self._contexts[f"{trial_id}:{sequence}"] = context
@@ -86,20 +91,21 @@ class RunContextProvider:
 def create_run_app(
     *,
     run_id: str,
-    trial_ids: Sequence[str],
+    trial_models: Mapping[str, str],
     providers_path: Path,
     catalog_path: Path,
     database_path: Path,
     event_root: Path,
     subscriptions_root: Path,
+    budget_usd: float = 20.0,
 ) -> Starlette:
     providers = load_providers(providers_path)
     catalog = load_catalog(catalog_path)
     store = Store(database_path)
     events = EventLog(event_root)
     ledger = CallsLedger(store, catalog)
-    budget = Budget()
-    context_provider = RunContextProvider(run_id, trial_ids)
+    budget = Budget(cap_usd=budget_usd)
+    context_provider = RunContextProvider(run_id, trial_models)
     context_provider.set_catalog(catalog)
     app = create_production_app(
         providers,
@@ -112,31 +118,48 @@ def create_run_app(
     )
     app.state.run_store = store
     app.state.run_events = events
+
+    async def close_resources() -> None:
+        store.close()
+
+    app.state.close_run_resources = close_resources
     return app
 
 
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--run-id", required=True)
-    parser.add_argument("--trial-id", action="append", required=True)
+    parser.add_argument("--trial-model", action="append", required=True)
     parser.add_argument("--providers", type=Path, required=True)
     parser.add_argument("--catalog", type=Path, required=True)
     parser.add_argument("--database", type=Path, required=True)
     parser.add_argument("--events", type=Path, required=True)
     parser.add_argument("--subscriptions", type=Path, required=True)
+    parser.add_argument("--budget-usd", type=float, default=20.0)
     parser.add_argument("--host", default="0.0.0.0")
     parser.add_argument("--port", type=int, default=8765)
     options = parser.parse_args()
+    trial_models: dict[str, str] = {}
+    for value in options.trial_model:
+        trial_id, separator, model_ref = value.partition("=")
+        if not separator or not trial_id or not model_ref or trial_id in trial_models:
+            parser.error("each --trial-model must be a unique trial-id=model-ref pair")
+        token_for_trial(trial_id)
+        trial_models[trial_id] = model_ref
     app = create_run_app(
         run_id=options.run_id,
-        trial_ids=options.trial_id,
+        trial_models=trial_models,
         providers_path=options.providers,
         catalog_path=options.catalog,
         database_path=options.database,
         event_root=options.events,
         subscriptions_root=options.subscriptions,
+        budget_usd=options.budget_usd,
     )
-    uvicorn.run(app, host=options.host, port=options.port)
+    try:
+        uvicorn.run(app, host=options.host, port=options.port)
+    finally:
+        asyncio.run(app.state.close_run_resources())
 
 
 if __name__ == "__main__":

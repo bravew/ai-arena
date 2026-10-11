@@ -13,6 +13,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import math
 import time
 import zlib
 from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Callable, Mapping
@@ -451,14 +452,33 @@ async def _protocol(request: Request) -> Response:
         )
         cost_usd = context.cost_usd if context is not None else None
         if state.budget is not None and context is not None and state.events is not None:
-            cost_usd = None if target.model.pricing == "subscription" else context.cost_usd
+            if target.model.pricing == "subscription":
+                cost_usd = None
+            else:
+                request_payload = cast(dict[str, Any], payload)
+                bound = _bound_output_tokens(request_payload, source_protocol)
+                if bound is None:
+                    result_status = 400
+                    return _error(
+                        result_status,
+                        "unbounded_request",
+                        "metered requests require usable input and output catalog prices",
+                    )
+                body = json.dumps(request_payload, separators=(",", ":")).encode()
+                cost_usd = _bounded_request_cost(body, bound, source_protocol, target.model)
+                if cost_usd is None:
+                    result_status = 400
+                    return _error(
+                        result_status,
+                        "unbounded_request",
+                        "metered requests require usable input and output catalog prices",
+                    )
             call = _build_call(request, target, caller, context, seq, run_id, cost_usd, 0)
             try:
                 reservation = await state.budget.check_call(
                     call,
                     state.events,
                     subscription=target.model.pricing == "subscription",
-                    reserve_remaining=target.model.pricing != "subscription",
                 )
             except BudgetExceeded:
                 result_status = 402
@@ -925,6 +945,61 @@ def _unconfigured_translator(
     raise TranslationError(
         f"protocol translation from {source_protocol} to {target_protocol} is not configured"
     )
+
+
+def _bound_output_tokens(payload: dict[str, Any], protocol: str) -> int | None:
+    fields = {
+        "anthropic": ("max_tokens",),
+        "chat": ("max_tokens", "max_completion_tokens"),
+        "responses": ("max_output_tokens",),
+        "gemini": ("generationConfig",),
+    }.get(protocol)
+    if fields is None:
+        return None
+    if protocol == "gemini":
+        config = payload.get("generationConfig")
+        if isinstance(config, dict):
+            config_dict = cast(dict[str, Any], config)
+            value = config_dict.get("maxOutputTokens")
+        else:
+            value = None
+    else:
+        value = next((payload.get(field) for field in fields if field in payload), None)
+    if not isinstance(value, int) or isinstance(value, bool) or value <= 0:
+        return None
+    if protocol == "chat" and payload.get("n", 1) != 1:
+        return None
+    return value
+
+
+_PROVIDER_PROMPT_OVERHEAD_TOKENS = 4096
+
+
+def _bounded_request_cost(
+    body: bytes, output_tokens: int, protocol: str, model: Any
+) -> float | None:
+    """Price a request bound using byte-bounded input and explicit output-token limits.
+
+    A token spans at least one UTF-8 byte of the serialized request, so the byte
+    count bounds the prompt tokens. A fixed margin covers provider-added prompt
+    text such as tool preambles. Every input and output rate is summed, which
+    over-reserves rather than under-reserves cached and reasoning tokens.
+    """
+    if protocol not in {"anthropic", "chat", "responses", "gemini"}:
+        return None
+    prices = model.price_per_mtok
+    if prices is None or not any(value > 0 for value in prices.values()):
+        return None
+    if output_tokens <= 0:
+        return None
+    input_prices = [prices[key] for key in ("in", "cache_read", "cache_write") if key in prices]
+    output_prices = [prices[key] for key in ("out", "reasoning") if key in prices]
+    if "in" not in prices or "out" not in prices:
+        return None
+    input_reserve = (len(body) + _PROVIDER_PROMPT_OVERHEAD_TOKENS) * sum(input_prices)
+    output_reserve = output_tokens * sum(output_prices)
+    upper_bound = (input_reserve + output_reserve) / 1_000_000
+    return upper_bound if math.isfinite(upper_bound) and upper_bound > 0 else None
 
 
 def _request_protocol(request: Request) -> str:
