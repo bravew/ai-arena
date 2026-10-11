@@ -12,9 +12,8 @@ import mimetypes
 from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
-from typing import cast
 
-from arena.agents.local import SignInError
+from arena.agents.local import SignIn, SignInError
 from arena.catalog.config import CatalogModel
 from arena.core.cas import ArtifactStore
 from arena.core.ids import content_id
@@ -22,7 +21,7 @@ from arena.core.models import Contestant, RunEvent
 from arena.core.store import Store
 from arena.gateway.classify import FailureClass
 from arena.gateway.rests import RestBook
-from arena.providers.accounts import AccountStore, account_label, resolve_sign_in
+from arena.providers.accounts import account_label
 from arena.providers.config import Provider
 from arena.providers.runtimes import (
     RuntimeStatus,
@@ -31,6 +30,7 @@ from arena.providers.runtimes import (
     spec_for_vendor,
 )
 from arena.providers.runtimes.detect import find_binary
+from arena.runners.account_context import SignInSnapshot, account_key
 from arena.runners.completion import CompletionResult
 from arena.runners.local_cli import (
     FailureKind,
@@ -57,23 +57,18 @@ class PreflightIssue:
     message: str
 
 
-def provider_concurrency(provider: Provider) -> int:
-    """`limits.concurrency` for the account, default 1 so a lone account is never oversubscribed."""
-    limits: object = (provider.model_extra or {}).get("limits")
-    value: object = (
-        cast("dict[str, object]", limits).get("concurrency") if isinstance(limits, dict) else None
-    )
-    return value if isinstance(value, int) and value >= 1 else 1
-
-
 def preflight_local_cli(
     contestant: Contestant,
     provider: Provider,
     models: Mapping[str, CatalogModel],
-    accounts: AccountStore,
+    sign_ins: SignInSnapshot,
     environ: Mapping[str, str],
 ) -> list[PreflightIssue]:
-    """Each missing precondition has its own issue. No model request is made."""
+    """Each missing precondition has its own issue. No model request is made.
+
+    The sign-in was resolved once for the whole run, so preflight reads the snapshot rather than
+    resolving again; a vendor with no usable sign-in is already recorded there as `sign_in`.
+    """
     name = contestant.label or contestant.id
     ref = str(contestant.model)
     issues: list[PreflightIssue] = []
@@ -102,9 +97,8 @@ def preflight_local_cli(
     if report.status is not RuntimeStatus.OK:
         hint = f" ({report.hint})" if report.hint else ""
         add(report.status.value, f"{spec.runtime}: {report.detail}{hint}")
-    try:
-        resolve_sign_in(spec.vendor, accounts, environ)
-    except SignInError as error:
+    error = sign_ins.error_for(spec.vendor)
+    if error is not None:
         add("sign_in", f"{spec.runtime}: {error}")
     return issues
 
@@ -116,11 +110,18 @@ class LocalCliRun:
     store: Store
     artifacts: ArtifactStore
     capture: UsageCapture
-    accounts: AccountStore
+    sign_ins: SignInSnapshot
     environ: Mapping[str, str]
     rests: RestBook
     timeout: float = DEFAULT_TIMEOUT_SECONDS
     scratch_base: Path | None = None
+
+
+def _sign_in(shared: LocalCliRun, vendor: str, runtime: str) -> SignIn:
+    try:
+        return shared.sign_ins.for_vendor(vendor)
+    except SignInError as error:
+        raise LocalCliTrialError(f"{runtime}: {error}") from error
 
 
 async def execute_local_cli_trial(
@@ -130,7 +131,11 @@ async def execute_local_cli_trial(
     spec = spec_for_vendor(subscription.vendor) if subscription is not None else None
     if spec is None:
         raise LocalCliTrialError(f"no vendor CLI is recorded for provider {provider.id}")
-    if shared.rests.is_resting(provider.id):
+    sign_in = _sign_in(shared, spec.vendor, spec.runtime)
+    # The lane and rest key is the account's private hash, not the redacted display label, so two
+    # aliases of one account share both. `lane_for` was built from the same key before scheduling.
+    account = account_key(spec.vendor, sign_in)
+    if shared.rests.is_resting(account):
         raise LocalCliTrialError(
             f"{provider.id}: subscription limit reached earlier in this run; "
             "resume after your plan resets"
@@ -138,10 +143,6 @@ async def execute_local_cli_trial(
     binary = find_binary(spec, shared.environ)
     if binary is None:
         raise LocalCliTrialError(f"{spec.runtime} is not installed; run `{spec.install_hint}`")
-    try:
-        sign_in = resolve_sign_in(spec.vendor, shared.accounts, shared.environ)
-    except SignInError as error:
-        raise LocalCliTrialError(f"{spec.runtime}: {error}") from error
     trial_id = _trial_id(run_id, job)
     result = await run_local_cli(
         LocalCliRequest(
@@ -156,7 +157,7 @@ async def execute_local_cli_trial(
         )
     )
     if result.failure is FailureKind.LIMIT_REACHED:
-        shared.rests.rest(provider.id, FailureClass.SUBSCRIPTION_LIMIT)
+        shared.rests.rest(account, FailureClass.SUBSCRIPTION_LIMIT)
     outcome = await shared.capture.capture(
         run_id=run_id,
         trial_id=trial_id,
