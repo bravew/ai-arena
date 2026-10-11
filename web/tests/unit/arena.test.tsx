@@ -57,6 +57,24 @@ describe('ArenaView', () => {
     await waitFor(() => expect(data.nextPair).toHaveBeenCalledTimes(2));
   });
 
+  it('keeps identities hidden and allows retry after a vote failure', async () => {
+    const castVote = vi.fn()
+      .mockRejectedValueOnce(new Error('vote service unavailable'))
+      .mockResolvedValueOnce(reveal);
+    const data = source({ castVote });
+    render(<ArenaView dataSource={data} />);
+
+    await screen.findByText('Answer from left contestant.');
+    fireEvent.click(screen.getByRole('button', { name: /A is better/i }));
+    expect((await screen.findByRole('alert')).textContent).toContain('vote service unavailable');
+    expect(screen.queryByRole('heading', { name: 'Identities revealed' })).toBeNull();
+    expect(screen.queryByText('winner-model')).toBeNull();
+
+    fireEvent.click(screen.getByRole('button', { name: /A is better/i }));
+    expect(await screen.findByRole('heading', { name: 'Identities revealed' })).toBeTruthy();
+    expect(castVote).toHaveBeenCalledTimes(2);
+  });
+
   it('shows completion when there are no pairs', async () => {
     render(<ArenaView dataSource={source({ nextPair: vi.fn(async () => null) })} />);
     await waitFor(() => expect(screen.getByRole('status').textContent).toContain('completed all available comparisons'));
