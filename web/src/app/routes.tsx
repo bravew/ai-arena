@@ -15,6 +15,7 @@ const navigation = [
   { path: '/live', label: 'Live' },
   { path: '/ops', label: 'Ops' },
   { path: '/judges', label: 'Judges' },
+  { path: '/vote', label: 'Vote' },
 ];
 
 export function AppLayout() {
@@ -133,6 +134,7 @@ function glyphFor(path: string): string {
     '/live': '◉',
     '/ops': '⚙',
     '/judges': '∑',
+    '/vote': '⚖',
   };
   return glyphs[path] ?? '·';
 }

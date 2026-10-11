@@ -231,6 +231,47 @@ class HumanVoteService:
         """Human-labeled pair preferences, retaining both-bad labels explicitly."""
         return self.votes
 
+    def gold_labels(self) -> list[dict[str, Any]]:
+        """One row per voted pair: the majority human verdict, in the pair's own A/B order.
+
+        `human_verdict` is 'a', 'b', 'tie' or 'both_bad'. A split with no single leader is 'tie'.
+        These rows carry no judge verdict, so they join a judge's output by `item_id`; they are
+        not a `PairJudgment` file.
+        """
+        rows: list[dict[str, Any]] = []
+        for pair in self.pairs:
+            counts = {"a": 0, "b": 0, "tie": 0, "both_bad": 0}
+            for vote in self._votes:
+                if vote.pair_id != pair.pair_id:
+                    continue
+                if vote.choice == Choice.TIE:
+                    counts["tie"] += 1
+                elif vote.choice == Choice.BOTH_BAD:
+                    counts["both_bad"] += 1
+                else:
+                    left_wins = vote.choice == Choice.A
+                    winner = vote.left_trial_id if left_wins else vote.right_trial_id
+                    counts["a" if winner == pair.trial_a_id else "b"] += 1
+            if not any(counts.values()):
+                continue
+            top = max(counts.values())
+            leaders = [name for name, number in counts.items() if number == top]
+            rows.append(
+                {
+                    "item_id": pair.pair_id,
+                    "task_id": pair.task_id,
+                    "trial_a_id": pair.trial_a_id,
+                    "trial_b_id": pair.trial_b_id,
+                    "contestant_a_id": pair.contestant_a_id,
+                    "contestant_b_id": pair.contestant_b_id,
+                    "length_a": len(pair.content_a),
+                    "length_b": len(pair.content_b),
+                    "human_verdict": leaders[0] if len(leaders) == 1 else "tie",
+                    "votes": counts,
+                }
+            )
+        return rows
+
     def leaderboard(self, *, samples: int = 2_000) -> Ratings:
         judgments = [
             PairwiseJudgment(

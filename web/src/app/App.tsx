@@ -16,6 +16,10 @@ import { RunDiffView } from '../views/rundiff/RunDiffView';
 import { LiveView } from '../views/live/LiveView';
 import { OpsView } from '../views/ops/OpsView';
 import { JudgesView } from '../views/judges/JudgesView';
+import { ArenaView } from '../views/arena/ArenaView';
+import { createHttpArenaSource } from '../views/arena/http-source';
+
+const arenaSource = createHttpArenaSource();
 
 function CompareRoute() { const { bundle } = useBundleState(); return bundle ? <CompareView bundle={bundle} /> : <PlaceholderPage title="Compare trials" />; }
 function TraceRoute() { const { bundle } = useBundleState(); return bundle ? <TraceView bundle={bundle} /> : <PlaceholderPage title="Trace" />; }
@@ -42,6 +46,7 @@ const routeConfig = [
       { path: 'live', element: <LiveRoute /> },
       { path: 'ops', element: <OpsView /> },
       { path: 'judges', element: <JudgesView /> },
+      { path: 'vote', element: <ArenaView dataSource={arenaSource} /> },
       { path: '*', element: <PlaceholderPage title="Page not found" /> },
     ],
   },

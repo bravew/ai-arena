@@ -127,3 +127,19 @@ def test_pareto_price_axis_requires_costs_and_rejects_duplicate_ids() -> None:
         pareto_frontier([ParetoPoint("flat", 0.5, 100)], cost_axis="cost_usd_per_task")
     with pytest.raises(ValueError, match="unique"):
         pareto_frontier([ParetoPoint("a", 0.5, 100), ParetoPoint("a", 0.7, 90)])
+
+
+def test_bootstrap_win_probability_uses_strengths_not_log_strengths() -> None:
+    import random
+
+    from arena.stats.ratings import _simulate  # pyright: ignore[reportPrivateUsage]
+
+    # Mirrored log-strengths +1/-1 sum to zero. Used as raw strengths that divides by zero, and
+    # the better contestant would not be favored either.
+    log_strengths = {"a": 1.0, "b": -1.0}
+    edge = _judgment("a", "b", "left")
+    wins = sum(
+        _simulate(edge, log_strengths, random.Random(seed)).outcome == "left" for seed in range(400)
+    )
+
+    assert 0.8 < wins / 400 < 0.95  # 1 / (1 + e**-2) is about 0.88
