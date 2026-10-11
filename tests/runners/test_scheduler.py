@@ -157,7 +157,7 @@ def test_estimated_budget_skips_trials_before_dispatch() -> None:
     assert calls == 2
 
 
-def test_cli_run_refuses_non_mock_completion_until_agent_scaffold_is_configured(
+def test_cli_run_refuses_non_mock_completion_without_a_provider_credential(
     tmp_path: Path,
 ) -> None:
     cli = CliRunner()
@@ -176,7 +176,7 @@ def test_cli_run_refuses_non_mock_completion_until_agent_scaffold_is_configured(
     )
 
     assert result.exit_code == 2
-    assert "no usable catalog price for anthropic/claude-sonnet-4-5" in result.output
+    assert "provider credential is unavailable: ANTHROPIC_API_KEY" in result.output
     assert not (tmp_path / "arena.db").exists()
 
 
