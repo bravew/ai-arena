@@ -166,14 +166,14 @@ def _report(
     return RuntimeReport(spec.runtime, spec.vendor, status, auth, binary, version, detail, hint)
 
 
-def detect_runtime(
+def detect_version(
     spec: RuntimeSpec,
     environ: Mapping[str, str] | None = None,
     *,
     probe: Probe = run_probe,
     find: Finder = find_binary,
 ) -> RuntimeReport:
-    """Version and sign-in state of one vendor CLI, without a model call."""
+    """Check the binary's version without reading sign-in state."""
     source = os.environ if environ is None else environ
     binary = find(spec, source)
     if binary is None:
@@ -209,7 +209,7 @@ def detect_runtime(
             binary=binary,
         )
     match = _VERSION.search(version_result.stdout + version_result.stderr)
-    if match is None:
+    if version_result.returncode != 0 or match is None:
         return _report(
             spec,
             RuntimeStatus.PROTOCOL_FAILURE,
@@ -217,7 +217,8 @@ def detect_runtime(
             binary=binary,
         )
     version = match.group(0)
-    if (int(match.group(1)), int(match.group(2))) < spec.min_version:
+    found_version = tuple(int(part) for part in match.groups())
+    if found_version < spec.min_version:
         wanted = ".".join(str(part) for part in spec.min_version)
         return _report(
             spec,
@@ -228,6 +229,24 @@ def detect_runtime(
             version=version,
             hint=f"Update it: {spec.install_hint}",
         )
+    return _report(spec, RuntimeStatus.OK, "version compatible", binary=binary, version=version)
+
+
+def detect_runtime(
+    spec: RuntimeSpec,
+    environ: Mapping[str, str] | None = None,
+    *,
+    probe: Probe = run_probe,
+    find: Finder = find_binary,
+) -> RuntimeReport:
+    """Version and sign-in state of one vendor CLI, without a model call."""
+    source = os.environ if environ is None else environ
+    report = detect_version(spec, source, probe=probe, find=find)
+    if report.status is not RuntimeStatus.OK:
+        return report
+    binary, version = report.binary, report.version
+    assert binary is not None
+    env = probe_environment(source)
     try:
         auth = probe([binary, *spec.auth_args], env, PROBE_TIMEOUT_SECONDS)
         signed_in, detail = spec.parse_auth(auth.returncode, auth.stdout, auth.stderr)

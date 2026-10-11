@@ -1,0 +1,56 @@
+# `claude --help` entries for the flags the local-cli runner sets, plus --add-dir and
+# --permission-mode for context. Captured 2026-10-11 from Claude Code 2.1.296 on macOS.
+# Not a model call. The lines are the CLI's own words.
+  --add-dir <directories...>            Additional directories to allow tool
+                                        access to
+  --allowedTools, --allowed-tools <tools...>
+      Comma or space-separated list of tool names to allow (e.g. "Bash(git *)
+      Edit")
+  --disallowedTools, --disallowed-tools <tools...>
+      Comma or space-separated list of tool names to deny (e.g. "Bash(git *)
+      Edit")
+  --permission-mode <mode>              Permission mode to use for the session
+                                        (choices: "acceptEdits", "auto",
+                                        "bypassPermissions", "manual",
+                                        "dontAsk", "plan")
+  --permission-prompts <target>         Who answers permission prompts with
+                                        --print: "host" (the SDK host or
+                                        --permission-prompt-tool) or "none"
+                                        (nobody: anything that would prompt is
+                                        denied automatically; the permission
+                                        mode still decides everything else)
+                                        (choices: "host", "none", default:
+                                        "host")
+  --restricted                          Restricted mode: removes the built-in
+                                        tools that run commands or code (Bash,
+                                        PowerShell, REPL and the other
+                                        code-running tools) and WebFetch unless
+                                        --tools names them, and ignores user,
+                                        project and local settings files
+                                        (managed settings and --settings still
+                                        apply; add --strict-mcp-config to skip
+                                        MCP servers too). Also confines the file
+                                        tools to the working directories
+                                        (--add-dir included), refuses
+                                        bypassPermissions, and lets only a
+                                        person or the configured permission
+                                        handler approve writes to settings, git
+                                        and tool-configuration files.
+  --safe-mode                           Start with all customizations
+                                        (CLAUDE.md, skills, installed plugins,
+                                        hooks, MCP servers, custom commands and
+                                        agents, output styles, workflows, custom
+                                        themes, keybindings, and more) disabled
+                                        — useful for troubleshooting a broken
+                                        configuration. Admin-managed (policy)
+                                        settings still apply. Auth, model
+                                        selection, built-in tools and plugins,
+                                        and permissions work normally. Sets
+                                        CLAUDE_CODE_SAFE_MODE=1.
+  --strict-mcp-config                   Only use MCP servers from --mcp-config,
+                                        ignoring all other MCP configurations
+  --tools <tools...>                    Specify the list of available tools from
+                                        the built-in set. Use "" to disable all
+                                        tools, "default" to use all tools, or
+                                        specify tool names (e.g.
+                                        "Bash,Edit,Read").
