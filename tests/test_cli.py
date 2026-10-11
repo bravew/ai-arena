@@ -13,3 +13,21 @@ def test_version() -> None:
 def test_no_arguments_prints_help() -> None:
     result = CliRunner().invoke(app, [])
     assert "Compare AI models" in result.output
+
+
+def test_serve_command_is_registered() -> None:
+    result = CliRunner().invoke(app, ["serve", "--help"])
+    assert result.exit_code == 0
+    assert any(command.name == "serve" for command in app.registered_commands)
+
+
+def test_serve_refuses_off_box_binding_without_key() -> None:
+    result = CliRunner().invoke(app, ["serve", "--host", "0.0.0.0"])
+    assert result.exit_code == 2
+    assert "requires ARENA_RUN_KEY" in result.output
+
+
+def test_export_supports_static_format() -> None:
+    result = CliRunner().invoke(app, ["export", "--help"])
+    assert result.exit_code == 0
+    assert "static" in result.output
