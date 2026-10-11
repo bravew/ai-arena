@@ -8,6 +8,7 @@ import pytest
 from typer.testing import CliRunner
 
 from arena.cli import app
+from arena.providers.config import Provider, ProviderConfig, ProviderKey
 
 runner = CliRunner()
 
@@ -78,44 +79,79 @@ def test_providers_test_sends_one_token_request_per_key(monkeypatch: Any, tmp_pa
     assert "test-secret" not in result.output
 
 
+def _stub_config_file(tmp_path: Path) -> Path:
+    """A file that exists so the option passes, while `load_providers` is patched out."""
+    path = tmp_path / "providers.yaml"
+    path.write_text("providers: []\n", encoding="utf-8")
+    return path
+
+
+def _unvalidated_config(provider: Provider) -> Any:
+    """A provider config that skipped Pydantic validation, so the CLI's own guard is reached.
+
+    `load_providers` runs the `Provider` validator, which rejects a bad endpoint before
+    `providers test` ever enters its per-key loop. Building the model without validation
+    leaves that loop guard as the only thing standing between the endpoint and the key.
+    """
+    return ProviderConfig.model_construct(providers=[provider])
+
+
 def test_providers_test_rejects_http_endpoint_before_transport(
     monkeypatch: Any, tmp_path: Path
 ) -> None:
     calls: list[str] = []
-    config = tmp_path / "providers.yaml"
-    config.write_text(
-        "providers:\n"
-        "  - id: local\n"
-        "    apis: {chat: http://provider.invalid/v1}\n"
-        "    keys: [{id: one, env: ARENA_TEST_KEY}]\n",
-        encoding="utf-8",
-    )
     monkeypatch.setenv("ARENA_TEST_KEY", "test-secret")
+    monkeypatch.setattr(
+        "arena.cli_gateway.load_providers",
+        lambda _path: _unvalidated_config(
+            Provider.model_construct(
+                id="local",
+                keys=[ProviderKey(id="one", env="ARENA_TEST_KEY")],
+                apis={"chat": "http://provider.invalid/v1"},
+            )
+        ),
+    )
     monkeypatch.setattr(httpx, "post", lambda *args, **kwargs: calls.append("sent"))
+    config = _stub_config_file(tmp_path)
     result = runner.invoke(app, ["providers", "test", "--config", str(config)])
     assert result.exit_code != 0
     assert calls == []
-    assert "HTTPS" in result.output
+    # The CLI's own guard fired: the endpoint never reached the transport.
+    assert "failed (ValueError)" in result.output
 
 
 def test_providers_test_rejects_endpoint_before_reading_the_key(
     monkeypatch: Any, tmp_path: Path
 ) -> None:
     calls: list[str] = []
-    config = tmp_path / "providers.yaml"
-    config.write_text(
-        "providers:\n"
-        "  - id: local\n"
-        "    apis: {chat: https://user:password@provider.invalid/v1}\n"
-        "    keys: [{id: one, env: ARENA_TEST_KEY}]\n",
-        encoding="utf-8",
+
+    class UnreadableEnvironment(dict[str, str]):
+        def get(self, *_: object) -> str:
+            raise AssertionError("invalid endpoint must be rejected before key lookup")
+
+    class UnreadableOs:
+        """Stands in for the module's `os`, so only this module's environ is unusable."""
+
+        environ = UnreadableEnvironment()
+
+    monkeypatch.setattr(
+        "arena.cli_gateway.load_providers",
+        lambda _path: _unvalidated_config(
+            Provider.model_construct(
+                id="local",
+                keys=[ProviderKey(id="one", env="ARENA_TEST_KEY")],
+                apis={"chat": "https://user:password@provider.invalid/v1"},
+            )
+        ),
     )
-    monkeypatch.setenv("ARENA_TEST_KEY", "DO-NOT-SEND-THIS")
+    monkeypatch.setattr("arena.cli_gateway.os", UnreadableOs())
     monkeypatch.setattr(httpx, "post", lambda *args, **kwargs: calls.append("sent"))
+    config = _stub_config_file(tmp_path)
     result = runner.invoke(app, ["providers", "test", "--config", str(config)])
     assert result.exit_code != 0
     assert calls == []
-    assert "DO-NOT-SEND-THIS" not in result.output
+    # The guard ran before any key lookup, so the unreadable environ was never consulted.
+    assert "failed (ValueError)" in result.output
 
 
 def test_providers_test_treats_a_redirect_as_a_failure_without_following(
