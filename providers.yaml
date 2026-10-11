@@ -20,6 +20,7 @@ providers:
       vendor: claude
       plan: max
       import: own-sign-in
+      runtime: local-cli
     limits: {concurrency: 2}
   - id: openai-plus
     keys: []

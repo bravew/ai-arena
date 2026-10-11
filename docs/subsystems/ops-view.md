@@ -17,7 +17,7 @@
 
 1. The router mounts `OpsView` at `/ops`.
 2. Without an injected source, `OpsView` requests `/api/ops` with same-origin credentials. The server's normal authentication check protects this route; off-box use requires a run key and session.
-3. The server returns the latest 200 calls, one usage and mean-latency point per run, arena-counted token meters, redacted stored accounts, and cached vendor CLI status probes. There is no vendor quota endpoint in this runtime.
+3. The server returns the latest 200 calls, one usage and mean-latency point per run, arena-counted token meters, redacted stored accounts, and cached vendor CLI status probes. Calls from API-key providers and `cli_reported` calls from Claude or Codex share the ledger while retaining their provider and protocol attribution. There is no vendor quota endpoint in this runtime.
 4. Calls and subscription meters are live. Lanes and hooks are empty and each has a source explanation because the viewer process has no live gateway lane snapshot or hook instrumentation. An HTTP error is shown in the page, with fixture values retained as fallback.
 
 ## Constraints and failure behavior

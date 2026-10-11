@@ -112,6 +112,35 @@ uv run arena doctor                                # Docker, gateway, providers,
 
 `arena run --resume <run id>` retries errored and missing trials.
 
+### Add providers and compare their models
+
+Use `providers.yaml` for API providers and subscription accounts. API credentials
+are environment variables named in the provider file; subscription sign-ins are
+stored by `arena providers add` and are used by the vendor's own CLI. Automated
+evaluation may count against a consumer plan and may breach its terms.
+
+```sh
+uv run arena providers detect                  # installed CLIs, versions and sign-in state; no model call
+uv run arena providers add claude               # vendor login and register the Claude account
+uv run arena providers add codex                # vendor login and register the ChatGPT/Codex account
+uv run arena providers add openai --env OPENAI_API_KEY
+uv run arena providers models openai-plus       # show models returned by the Codex CLI
+uv run arena providers test anthropic            # API connection test; sends a small request
+uv run arena run suites/smoke -c contestants/sets/providers-compare.yaml --budget-usd 5
+```
+
+Review `contestants/sets/providers-compare.yaml` and the catalog prices before
+running. The budget limits metered API calls; subscription trials use each
+vendor's plan quota. Claude's CLI does not provide a checked model-list
+command, so its subscription model must be listed in the catalog by hand. The
+Claude model ref must use the subscription provider ID (`anthropic-max`), while
+the API-key models use `anthropic`. The Codex model list is read from `codex
+debug models`. Do not use `providers test` when you only want to confirm
+discovery: that command makes an opt-in test call.
+
+**Maintainer follow-up:** fold the decided provider/runtime and local-CLI
+subscription behavior into DEV_PLAN §5.8 and §6.2.
+
 ### Metered agent runs
 
 A contestant with a `scaffold` runs through a gateway container that `arena run`
@@ -131,8 +160,11 @@ uv run arena run suites/skill-ablation -c contestants/sets/ablation.yaml --repea
 
 A trial counts as a success only if the agent finished and the ledger holds
 successful, priced calls for that run, trial and model, each with a
-`call_finished` event. Subscription-backed models are rejected for agent trials
-until an account runtime is wired in.
+`call_finished` event. Subscription models whose provider declares
+`runtime: local-cli` run directly through the vendor's own CLI with a scratch
+home and workspace; they do not enter the gateway container. Their CLI-reported
+usage is labeled `subscription (local CLI)` and has no dollar price. The report
+labels API, gateway subscription and local CLI subscription serving separately.
 
 ### Other commands
 
@@ -176,6 +208,8 @@ your real agent configuration.
 
 ## Known gaps
 
+- **No real provider run.** Fake providers cover the run flow. A real run needs a
+  provider key and approval to spend up to US$20.
 - **No real launch run.** The launch model has a catalog price. The run still
   needs a provider key and an explicit go-ahead to spend up to US$20
   ([#62](https://github.com/bravew/ai-arena/issues/62)).
@@ -193,7 +227,9 @@ your real agent configuration.
 - **A resumed run** appends a second `run_started` and `run_finished` pair to
   the run's events.
 - **Kits and native sessions** are not resolved or persisted by `arena run`.
-- **Subscription-backed models** are not usable for agent trials.
+- **Subscription-backed trials** are implemented through the vendor's local CLI
+  when the provider declares `runtime: local-cli`; API gateway subscription
+  routing remains unverified for ChatGPT ([provider runtime notes](docs/subsystems/provider-runtimes.md)).
 
 ## Contributing
 
