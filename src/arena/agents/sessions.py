@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+from collections.abc import Sequence
 from datetime import UTC, datetime
 from typing import Any, cast
 
@@ -17,6 +18,27 @@ from arena.core.models import (
     ToolCall,
     Turn,
 )
+from arena.gateway.mcp_proxy import McpSpan
+
+
+def _with_spans(turn: Turn, trial_id: str, spans: Sequence[McpSpan]) -> Turn:
+    """Append the spans that belong to `trial_id` to a turn's MCP calls; others are dropped."""
+    own = [
+        McpCall(
+            server=span.server, tool=span.tool, duration_ms=span.duration_ms, status=span.status
+        )
+        for span in spans
+        if span.trial_id == trial_id
+    ]
+    return turn.model_copy(update={"mcp_calls": [*turn.mcp_calls, *own]}) if own else turn
+
+
+def with_mcp_spans(session: Session, spans: Sequence[McpSpan]) -> Session:
+    """The session with the gateway's MCP spans for its own trial on its final turn."""
+    if not session.turns:
+        return session
+    last = _with_spans(session.turns[-1], session.trial_id, spans)
+    return session.model_copy(update={"turns": [*session.turns[:-1], last]})
 
 
 def assemble_session(
@@ -29,6 +51,7 @@ def assemble_session(
     kit_hash: str = "none",
     run_id: str = "",
     first_seq: int = 1,
+    mcp_spans: Sequence[McpSpan] = (),
 ) -> tuple[Session, tuple[RunEvent, ...]]:
     """Build turns and RunEvents from newline-delimited native transcript records.
 
@@ -36,6 +59,8 @@ def assemble_session(
     Records without a turn id belong to the current turn. Gateway calls are scoped
     to this trial and attached by explicit call id when present, otherwise in ledger
     order, one per native turn. A filesystem diff is attached to the final turn.
+    Gateway MCP spans for this trial are attached to the final turn too: the gateway saw the
+    request, so it is recorded even when the native transcript has no matching `mcp_call`.
     """
     records: list[dict[str, Any]] = []
     parse_failed = False
@@ -143,6 +168,7 @@ def assemble_session(
                 "unmetered": False,
             }
         )
+    turns[-1] = _with_spans(turns[-1], trial_id, mcp_spans)
     if filesystem_diff:
         turns[-1] = turns[-1].model_copy(update={"files": list(filesystem_diff)})
 

@@ -9,8 +9,10 @@ from enum import StrEnum
 from typing import Any, Protocol
 
 from arena.agents.base import AgentAdapter, AgentBox, AgentProtocol, GatewayEndpoint, KitInstall
+from arena.agents.sessions import with_mcp_spans
 from arena.core.modelref import ModelRef
 from arena.core.models import Call, Session, Task, TrialFlags
+from arena.gateway.mcp_proxy import McpSpanLog
 
 
 class ReachedState(StrEnum):
@@ -57,7 +59,10 @@ class AgentRunner:
         model: ModelRef,
         trial_token: str,
         kit: Any = None,
+        mcp_spans: McpSpanLog | None = None,
     ) -> AgentRunResult:
+        """Run one trial. `mcp_spans` is the log the gateway's `McpProxy` writes to; each
+        session gets only the spans of its own trial."""
         version: str | None = None
         kit_install: KitInstall | None = None
         flags = TrialFlags()
@@ -91,6 +96,11 @@ class AgentRunner:
                 calls = await gateway.calls(trial_token)
                 native = adapter.collect(box)
                 sessions = adapter.sessions(native, calls) if native is not None else []
+                if mcp_spans is not None:
+                    sessions = [
+                        with_mcp_spans(session, mcp_spans.for_trial(session.trial_id))
+                        for session in sessions
+                    ]
                 return AgentRunResult(
                     state=ReachedState.REACHED if reached else ReachedState.UNMETERED,
                     error_class=None,

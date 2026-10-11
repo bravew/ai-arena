@@ -276,3 +276,126 @@ def test_skill_paths_cannot_leave_the_kit(tmp_path: Path) -> None:
     result = install_kit(FakeBox(), kit, root, FULL, GATEWAY)
 
     assert result.written == () and "not a folder inside the kit" in result.refused[0]
+
+
+PINNED = "0" * 40  # what RefusingResolver pins every ref to
+
+
+def _git_kit(tmp_path: Path, skill: str) -> tuple[Kit, Path]:
+    return _kit(tmp_path / "kit", f"id: k\nversion: 1\nskills: [{skill}]\n", {"x": "y"})
+
+
+def _checkout(tmp_path: Path) -> Path:
+    tree = tmp_path / "exported"
+    (tree / "skills/review").mkdir(parents=True)
+    (tree / "skills/review/SKILL.md").write_text("review")
+    (tree / "skills/review/run.sh").write_text("#!/bin/sh\n")
+    os.chmod(tree / "skills/review/run.sh", 0o755)
+    return tree
+
+
+def test_pinned_git_skill_is_copied_from_its_checkout_with_scripts_executable(
+    tmp_path: Path,
+) -> None:
+    kit, root = _git_kit(
+        tmp_path, "{git: https://x.test/org/skills.git, ref: main, subdir: skills/review}"
+    )
+    box = FakeBox()
+
+    result = install_kit(
+        box,
+        kit,
+        root,
+        FULL,
+        GATEWAY,
+        {("https://x.test/org/skills.git", PINNED): _checkout(tmp_path)},
+    )
+
+    assert box.files[f"{HOME}/skills/review/SKILL.md"] == "review"
+    assert ("chmod", "+x", f"{HOME}/skills/review/run.sh") in box.executed
+    assert result.refused == ()
+
+
+def test_git_skill_without_a_subdir_is_named_after_the_repository(tmp_path: Path) -> None:
+    kit, root = _git_kit(tmp_path, "{git: https://x.test/org/review-kit.git, ref: main}")
+    tree = tmp_path / "exported"
+    tree.mkdir()
+    (tree / "SKILL.md").write_text("whole repo")
+    box = FakeBox()
+
+    install_kit(
+        box, kit, root, FULL, GATEWAY, {("https://x.test/org/review-kit.git", PINNED): tree}
+    )
+
+    assert box.files == {f"{HOME}/skills/review-kit/SKILL.md": "whole repo"}
+
+
+def test_git_skill_without_a_supplied_checkout_is_refused_not_fetched(tmp_path: Path) -> None:
+    kit, root = _git_kit(tmp_path, "{git: https://x.test/r, ref: main}")
+    box = FakeBox()
+
+    result = install_kit(box, kit, root, FULL, GATEWAY)
+
+    assert result.written == () and box.calls == 0
+    assert any("no checkout of commit 000000000000" in refusal for refusal in result.refused)
+
+
+def test_git_skill_whose_ref_is_not_a_commit_is_refused(tmp_path: Path) -> None:
+    kit, root = _git_kit(tmp_path, "{git: https://x.test/r, ref: main}")
+    unpinned = kit.model_copy(update={"skills": [kit.skills[0].model_copy(update={"ref": "main"})]})
+
+    result = install_kit(
+        FakeBox(),
+        unpinned,
+        root,
+        FULL,
+        GATEWAY,
+        {("https://x.test/r", "main"): _checkout(tmp_path)},
+    )
+
+    assert result.written == ()
+    assert any("not a pinned commit hash" in refusal for refusal in result.refused)
+
+
+def test_a_checkout_for_another_commit_is_not_used(tmp_path: Path) -> None:
+    kit, root = _git_kit(tmp_path, "{git: https://x.test/r, ref: main, subdir: skills/review}")
+
+    result = install_kit(
+        FakeBox(), kit, root, FULL, GATEWAY, {("https://x.test/r", "1" * 40): _checkout(tmp_path)}
+    )
+
+    assert result.written == () and result.refused
+
+
+def test_a_checkout_with_a_git_directory_is_refused(tmp_path: Path) -> None:
+    kit, root = _git_kit(tmp_path, "{git: https://x.test/r, ref: main, subdir: skills/review}")
+    tree = _checkout(tmp_path)
+    (tree / ".git").mkdir()
+
+    result = install_kit(FakeBox(), kit, root, FULL, GATEWAY, {("https://x.test/r", PINNED): tree})
+
+    assert result.written == ()
+    assert any("contains .git" in refusal for refusal in result.refused)
+
+
+def test_git_skill_subdir_cannot_leave_its_checkout(tmp_path: Path) -> None:
+    kit, root = _git_kit(tmp_path, "{git: https://x.test/r, ref: main, subdir: ../outside}")
+    tree = _checkout(tmp_path)
+    (tmp_path / "outside").mkdir()
+    (tmp_path / "outside" / "SKILL.md").write_text("fixture")
+
+    result = install_kit(FakeBox(), kit, root, FULL, GATEWAY, {("https://x.test/r", PINNED): tree})
+
+    assert result.written == ()
+    assert any("not a folder inside the kit" in refusal for refusal in result.refused)
+
+
+def test_a_link_inside_a_git_skill_is_never_copied(tmp_path: Path) -> None:
+    kit, root = _git_kit(tmp_path, "{git: https://x.test/r, ref: main, subdir: skills/review}")
+    tree = _checkout(tmp_path)
+    (tree / "skills/review/escape").symlink_to("/etc/hosts")
+
+    result = install_kit(FakeBox(), kit, root, FULL, GATEWAY, {("https://x.test/r", PINNED): tree})
+
+    assert result.written == ()
+    assert any("link" in refusal for refusal in result.refused)

@@ -15,11 +15,17 @@ from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 
 from arena.agents.base import AgentBox, GatewayEndpoint, KitInstall
-from arena.core.models import Kit, McpServer
+from arena.core.models import Kit, McpServer, SkillSource
 from arena.kits.hashing import hash_kit
 
 _ENV_REFERENCE = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*)\}")
 _MCP_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$")
+_COMMIT = re.compile(r"^[0-9a-f]{40,64}$")
+_UNSAFE_NAME = re.compile(r"[^A-Za-z0-9._-]")
+
+# A Git skill's checkout, keyed by (repository URL, pinned commit). The caller exports the commit
+# into a directory with no `.git`; the installer never runs Git and never fetches anything itself.
+GitCheckouts = Mapping[tuple[str, str], Path]
 
 
 class KitPreflightError(ValueError):
@@ -86,15 +92,21 @@ def install_kit(
     root: Path,
     target: KitTarget,
     gateway: GatewayEndpoint,
+    git_checkouts: GitCheckouts | None = None,
 ) -> KitInstall:
-    """Stage files, verify staged kit identity, then copy and verify container bytes."""
+    """Stage files, verify staged kit identity, then copy and verify container bytes.
+
+    A Git skill is installed only from `git_checkouts[(git, commit)]`, where `ref` is already a
+    commit hash. Without a matching checkout the skill is refused, never fetched.
+    """
     if kit is None or not _has_content(kit):
         return KitInstall(written=())
 
     files: dict[str, bytes] = {}
     refused: list[str] = []
     _instructions(kit, root, target, files, refused)
-    _skills(kit, root, target, files, refused)
+    checkouts = git_checkouts or {}
+    _skills(kit, root, target, files, refused, checkouts)
     entries = _mcp_entries(kit, target, gateway, refused)
     for path, content in _mcp_files(target, entries):
         files[path] = content.encode()
@@ -104,19 +116,22 @@ def install_kit(
     # and this hash fails before the first container write; compare copied source paths as well.
     if hash_kit(kit, root) != kit.hash:
         raise KitInstallError(f"kit {kit.id!r} changed on disk after it was loaded")
-    _verify_staged_source(kit, root, target, files)
+    _verify_staged_source(kit, root, target, files, checkouts)
 
     executable: set[str] = set()
     for skill in kit.skills:
-        if not skill.path or target.skills_dir is None:
+        if target.skills_dir is None:
             continue
-        found = _skill_files(root, skill.path)
+        located = _skill_location(skill, root, checkouts)
+        if isinstance(located, str):
+            continue
+        skill_root, folder, name = located
+        found = _skill_files(skill_root, folder)
         if isinstance(found, str):
             continue
-        base = PurePosixPath(target.skills_dir) / Path(skill.path).name
+        base = PurePosixPath(target.skills_dir) / name
         for relative in found:
-            source = root / skill.path / relative
-            if os.access(source, os.X_OK):
+            if os.access(skill_root / folder / relative, os.X_OK):
                 executable.add(str(base / relative))
     for path, data in files.items():
         box.write_text(path, data.decode())
@@ -129,7 +144,7 @@ def install_kit(
 
 
 def _verify_staged_source(
-    kit: Kit, root: Path, target: KitTarget, files: Mapping[str, bytes]
+    kit: Kit, root: Path, target: KitTarget, files: Mapping[str, bytes], checkouts: GitCheckouts
 ) -> None:
     expected: dict[str, bytes] = {}
     if kit.instructions and target.instructions_path:
@@ -137,11 +152,15 @@ def _verify_staged_source(
         if data is not None:
             expected[target.instructions_path] = data
     for skill in kit.skills:
-        if not skill.path or target.skills_dir is None:
+        if target.skills_dir is None:
             continue
-        found = _skill_files(root, skill.path)
+        located = _skill_location(skill, root, checkouts)
+        if isinstance(located, str):
+            continue
+        skill_root, folder, name = located
+        found = _skill_files(skill_root, folder)
         if not isinstance(found, str):
-            base = PurePosixPath(target.skills_dir) / Path(skill.path).name
+            base = PurePosixPath(target.skills_dir) / name
             expected.update({str(base / relative): data for relative, data in found.items()})
     for path, data in expected.items():
         if files.get(path) != data:
@@ -190,22 +209,62 @@ def _instructions(
 
 
 def _skills(
-    kit: Kit, root: Path, target: KitTarget, files: dict[str, bytes], refused: list[str]
+    kit: Kit,
+    root: Path,
+    target: KitTarget,
+    files: dict[str, bytes],
+    refused: list[str],
+    checkouts: GitCheckouts,
 ) -> None:
     for skill in kit.skills:
         label = skill.path or skill.git or "skill"
         if target.skills_dir is None:
             refused.append(f"skill {label}: {target.agent_id} does not take skills")
             continue
-        if skill.git or skill.path is None:
-            refused.append(f"skill {label}: git skill sources have no checkout step yet")
+        located = _skill_location(skill, root, checkouts)
+        if isinstance(located, str):
+            refused.append(f"skill {label}: {located}")
             continue
-        found = _skill_files(root, skill.path)
+        skill_root, folder, name = located
+        found = _skill_files(skill_root, folder)
         if isinstance(found, str):
             refused.append(f"skill {label}: {found}")
             continue
-        base = PurePosixPath(target.skills_dir) / Path(skill.path).name
+        base = PurePosixPath(target.skills_dir) / name
         files.update({str(base / relative): data for relative, data in found.items()})
+
+
+def _skill_location(
+    skill: SkillSource, root: Path, checkouts: GitCheckouts
+) -> tuple[Path, str, str] | str:
+    """Where a skill's files are: (directory it must stay inside, folder in it, install name).
+
+    A string is the reason the skill cannot be installed.
+    """
+    if skill.git:
+        if not skill.ref or not _COMMIT.fullmatch(skill.ref):
+            return "git skill ref is not a pinned commit hash"
+        checkout = checkouts.get((skill.git, skill.ref))
+        if checkout is None:
+            return f"no checkout of commit {skill.ref[:12]} was supplied"
+        if (checkout / ".git").exists():
+            return "the checkout contains .git; supply an exported tree"
+        folder = skill.subdir or "."
+        return checkout, folder, _skill_name(skill)
+    if skill.path is None:
+        return "has neither a path nor a git source"
+    return root, skill.path, Path(skill.path).name
+
+
+def _skill_name(skill: SkillSource) -> str:
+    """A safe single path segment: the subdir's name, else the repository's."""
+    raw = (
+        Path(skill.subdir).name
+        if skill.subdir
+        else (skill.git or "").rstrip("/").rsplit("/", 1)[-1]
+    )
+    name = _UNSAFE_NAME.sub("-", raw.removesuffix(".git"))
+    return name if name.strip(".") else "skill"
 
 
 def _skill_files(root: Path, skill_path: str) -> dict[str, bytes] | str:
