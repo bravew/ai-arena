@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+import ipaddress
 import re
 from collections.abc import Mapping
 from pathlib import Path
 from typing import Any, Literal, cast
+from urllib.parse import urlsplit
 
 import yaml
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
@@ -23,6 +25,47 @@ class ConfigLoader(yaml.SafeLoader):
 
 def _construct_yaml_timestamp(loader: yaml.SafeLoader, node: yaml.ScalarNode) -> str:
     return loader.construct_scalar(node)
+
+
+def validate_credential_endpoint(endpoint: str) -> str:
+    """Return a safe endpoint for a credential-bearing request.
+
+    The endpoint must be absolute HTTPS, with a host and no URL userinfo. A
+    loopback host may use plain HTTP, because the DEV_PLAN keeps the gateway and
+    the Docker bridge on loopback; any other host must use HTTPS. A port of `0` is
+    accepted as a placeholder. The check runs before any credential is loaded or
+    sent.
+    """
+    message = "credential-bearing provider endpoints require an absolute HTTPS URL"
+    try:
+        parts = urlsplit(endpoint)
+        _ = parts.port  # a non-numeric or out-of-range port raises ValueError
+        hostname = parts.hostname
+    except ValueError as error:
+        raise ValueError(message) from error
+    if (
+        not hostname
+        or any(character.isspace() or ord(character) < 33 for character in hostname)
+        or parts.username is not None
+        or parts.password is not None
+    ):
+        raise ValueError(message)
+    scheme = parts.scheme.lower()
+    if scheme == "https":
+        return endpoint
+    if scheme == "http" and _is_loopback_host(hostname):
+        return endpoint
+    raise ValueError(message)
+
+
+def _is_loopback_host(hostname: str) -> bool:
+    """Whether a URL host names this machine (localhost, 127.0.0.0/8, ::1)."""
+    if hostname.lower() == "localhost":
+        return True
+    try:
+        return ipaddress.ip_address(hostname).is_loopback
+    except ValueError:
+        return False
 
 
 ConfigLoader.add_constructor("tag:yaml.org,2002:timestamp", _construct_yaml_timestamp)
@@ -79,6 +122,15 @@ class Provider(ConfigModel):
     def runtime_belongs_to_subscription(self) -> Provider:
         if "runtime" in (self.model_extra or {}):
             raise ValueError("runtime belongs under subscription, not on the provider")
+        return self
+
+    @model_validator(mode="after")
+    def credential_endpoints_require_https(self) -> Provider:
+        raw_apis = (self.model_extra or {}).get("apis", {})
+        if (self.keys or self.subscription is not None) and isinstance(raw_apis, dict):
+            for endpoint in cast(dict[str, Any], raw_apis).values():
+                if isinstance(endpoint, str):
+                    validate_credential_endpoint(endpoint)
         return self
 
     @model_validator(mode="after")

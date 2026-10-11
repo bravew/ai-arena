@@ -6,7 +6,7 @@ from typer.testing import CliRunner
 
 from arena.catalog.config import load_catalog, resolve_model
 from arena.cli import app
-from arena.providers.config import load_providers
+from arena.providers.config import load_providers, validate_credential_endpoint
 
 
 def test_provider_keys_accept_environment_references(tmp_path: Path) -> None:
@@ -17,6 +17,88 @@ def test_provider_keys_accept_environment_references(tmp_path: Path) -> None:
         encoding="utf-8",
     )
     assert load_providers(config).providers[0].keys[0].env == "OPENAI_API_KEY"
+
+
+def test_provider_rejects_plaintext_credential_endpoints(tmp_path: Path) -> None:
+    config = tmp_path / "providers.yaml"
+    config.write_text(
+        "providers:\n  - id: openai\n"
+        "    apis: {chat: https://secure.example/v1, responses: http://plain.example/v1}\n"
+        "    keys: [{id: main, env: OPENAI_API_KEY}]\n",
+        encoding="utf-8",
+    )
+    with pytest.raises(ValueError, match="require an absolute HTTPS URL"):
+        load_providers(config)
+
+
+def test_provider_accepts_loopback_http_credential_endpoints(tmp_path: Path) -> None:
+    # The DEV_PLAN keeps the gateway and Docker bridge on loopback, so a local HTTP
+    # model gateway is a supported configuration.
+    config = tmp_path / "providers.yaml"
+    config.write_text(
+        "providers:\n  - id: local\n"
+        "    apis: {chat: http://127.0.0.1:8000/v1, responses: http://localhost:8000/v1}\n"
+        "    keys: [{id: main, env: LOCAL_KEY}]\n",
+        encoding="utf-8",
+    )
+    assert load_providers(config).providers[0].id == "local"
+
+
+@pytest.mark.parametrize(
+    "endpoint",
+    ["http://127.0.0.1:8000/v1", "http://localhost:8000/v1", "http://[::1]:8000/v1"],
+)
+def test_validate_credential_endpoint_accepts_loopback_http(endpoint: str) -> None:
+    assert validate_credential_endpoint(endpoint) == endpoint
+
+
+@pytest.mark.parametrize(
+    "endpoint",
+    ["http://plain.example/v1", "http://10.0.0.5/v1", "http://[2001:db8::1]/v1"],
+)
+def test_validate_credential_endpoint_rejects_non_loopback_http(endpoint: str) -> None:
+    with pytest.raises(ValueError, match="absolute HTTPS URL"):
+        validate_credential_endpoint(endpoint)
+
+
+def test_validate_credential_endpoint_keeps_strict_checks_on_loopback() -> None:
+    for endpoint in (
+        "http://user:pass@127.0.0.1:8000/v1",
+        "http://127.0.0.1:bad/v1",
+        "http://127.0.0.1:99999/v1",
+        "/v1",
+        "ftp://127.0.0.1/v1",
+    ):
+        with pytest.raises(ValueError, match="absolute HTTPS URL"):
+            validate_credential_endpoint(endpoint)
+
+
+def test_validate_credential_endpoint_accepts_a_loopback_placeholder_port() -> None:
+    # The e2e fixture uses port 0 as a placeholder and substitutes the real port before
+    # any request; nothing can connect to port 0, so it is safe to accept.
+    assert validate_credential_endpoint("http://127.0.0.1:0/v1") == "http://127.0.0.1:0/v1"
+
+
+@pytest.mark.parametrize(
+    "endpoint",
+    [
+        "/v1",
+        "https://user:pass@example.test/v1",
+        "https://example.test:bad/v1",
+        "ftp://example.test",
+    ],
+)
+def test_provider_rejects_malformed_or_unsafe_credential_endpoint(
+    tmp_path: Path, endpoint: str
+) -> None:
+    config = tmp_path / "providers.yaml"
+    config.write_text(
+        f"providers:\n  - id: openai\n    apis: {{chat: {endpoint}}}\n"
+        "    keys: [{id: main, env: OPENAI_API_KEY}]\n",
+        encoding="utf-8",
+    )
+    with pytest.raises(ValueError, match="absolute HTTPS URL"):
+        load_providers(config)
 
 
 def test_secret_fields_accept_environment_references(tmp_path: Path) -> None:

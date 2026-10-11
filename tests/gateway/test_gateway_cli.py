@@ -59,7 +59,7 @@ def test_providers_test_sends_one_token_request_per_key(monkeypatch: Any, tmp_pa
     config.write_text(
         "providers:\n"
         "  - id: local\n"
-        "    apis: {chat: http://provider.invalid/v1}\n"
+        "    apis: {chat: https://provider.invalid/v1}\n"
         "    keys: [{id: one, env: ARENA_TEST_KEY}]\n",
         encoding="utf-8",
     )
@@ -76,6 +76,77 @@ def test_providers_test_sends_one_token_request_per_key(monkeypatch: Any, tmp_pa
     assert len(calls) == 1
     assert '"max_tokens":1' in calls[0]["json"]
     assert "test-secret" not in result.output
+
+
+def test_providers_test_rejects_http_endpoint_before_transport(
+    monkeypatch: Any, tmp_path: Path
+) -> None:
+    calls: list[str] = []
+    config = tmp_path / "providers.yaml"
+    config.write_text(
+        "providers:\n"
+        "  - id: local\n"
+        "    apis: {chat: http://provider.invalid/v1}\n"
+        "    keys: [{id: one, env: ARENA_TEST_KEY}]\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("ARENA_TEST_KEY", "test-secret")
+    monkeypatch.setattr(httpx, "post", lambda *args, **kwargs: calls.append("sent"))
+    result = runner.invoke(app, ["providers", "test", "--config", str(config)])
+    assert result.exit_code != 0
+    assert calls == []
+    assert "HTTPS" in result.output
+
+
+def test_providers_test_rejects_endpoint_before_reading_the_key(
+    monkeypatch: Any, tmp_path: Path
+) -> None:
+    calls: list[str] = []
+    config = tmp_path / "providers.yaml"
+    config.write_text(
+        "providers:\n"
+        "  - id: local\n"
+        "    apis: {chat: https://user:password@provider.invalid/v1}\n"
+        "    keys: [{id: one, env: ARENA_TEST_KEY}]\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("ARENA_TEST_KEY", "DO-NOT-SEND-THIS")
+    monkeypatch.setattr(httpx, "post", lambda *args, **kwargs: calls.append("sent"))
+    result = runner.invoke(app, ["providers", "test", "--config", str(config)])
+    assert result.exit_code != 0
+    assert calls == []
+    assert "DO-NOT-SEND-THIS" not in result.output
+
+
+def test_providers_test_treats_a_redirect_as_a_failure_without_following(
+    monkeypatch: Any, tmp_path: Path
+) -> None:
+    calls: list[dict[str, Any]] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        calls.append({"host": request.url.host, "path": request.url.path})
+        return httpx.Response(302, headers={"location": "https://elsewhere.invalid/steal"})
+
+    config = tmp_path / "providers.yaml"
+    config.write_text(
+        "providers:\n"
+        "  - id: local\n"
+        "    apis: {chat: https://provider.invalid/v1}\n"
+        "    keys: [{id: one, env: ARENA_TEST_KEY}]\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("ARENA_TEST_KEY", "test-secret")
+    monkeypatch.setattr(
+        httpx,
+        "post",
+        lambda url, **kwargs: httpx.Client(transport=httpx.MockTransport(handler)).post(
+            url, **kwargs
+        ),
+    )
+    result = runner.invoke(app, ["providers", "test", "--config", str(config)])
+    assert result.exit_code != 0
+    assert "failed (HTTP 302)" in result.output
+    assert [call["host"] for call in calls] == ["provider.invalid"]
 
 
 def test_gateway_requires_loopback_host() -> None:

@@ -9,7 +9,7 @@ from datetime import UTC, datetime
 from typing import Any, cast
 
 from arena.gateway.resolve import Target
-from arena.providers.config import ProviderKey
+from arena.providers.config import ProviderKey, validate_credential_endpoint
 from arena.providers.subscriptions import SubscriptionError, SubscriptionStore, sign_request
 
 
@@ -59,11 +59,17 @@ class EndpointResolver:
             raise ProviderEndpointError("provider has no configured API endpoints")
         api_map = cast(dict[str, Any], apis)
         base_url = api_map.get(protocol)
-        if not isinstance(base_url, str) or not base_url.startswith(("https://", "http://")):
+        if not isinstance(base_url, str):
             raise ProviderEndpointError(f"provider has no endpoint for protocol {protocol!r}")
 
         if target.provider.kind == "mock":
             return ProviderEndpoint(protocol, base_url, "mock", "")
+        try:
+            validate_credential_endpoint(base_url)
+        except ValueError as error:
+            raise ProviderEndpointError(
+                "credential-bearing provider endpoints require HTTPS"
+            ) from error
         if target.provider.subscription is not None:
             return self._subscription(target, protocol, base_url.rstrip("/"), account_id)
         if account_id is not None:
