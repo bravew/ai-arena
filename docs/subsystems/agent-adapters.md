@@ -10,6 +10,7 @@
 | Contract harness | Checks a pinned CLI invocation against an injectable provider contract without a real provider | [`ContractHarness`](../../src/arena/agents/testing.py) |
 | Claude Code adapter | Injects gateway env into the CLI process, stages kit files and MCP config in the trial home, and parses native JSONL skill/tool events | [`ClaudeCodeAdapter`](../../src/arena/agents/claude_code.py) |
 | Session assembler | Merges native turn records, trial-scoped gateway Calls, skill/tool/MCP events, and filesystem diffs; emits session timeline RunEvents | [`assemble_session`](../../src/arena/agents/sessions.py) |
+| Aider adapter | Wires the pinned Aider CLI to the chat gateway, loads conventions with `--read`, refuses skills/MCP, and collects `.aider.chat.history.md` | [`AiderAdapter`](../../src/arena/agents/aider.py) |
 
 ## Runtime path
 
