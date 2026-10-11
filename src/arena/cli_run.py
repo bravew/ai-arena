@@ -11,13 +11,17 @@ import yaml
 
 from arena.catalog.config import CatalogModel, load_catalog
 from arena.cli import app
+from arena.core.cas import ArtifactStore
 from arena.core.ids import content_id
 from arena.core.modelref import ModelRef
 from arena.core.models import Contestant, Task
 from arena.core.store import Store
+from arena.gateway.auth import token_for_trial
 from arena.kits.matrix import expand_matrix
-from arena.providers.config import parse_yaml
+from arena.providers.config import load_providers, parse_yaml
+from arena.runners.agent_trial import adapter_for, execute_agent_trial
 from arena.runners.completion import CompletionResult, mock_completion
+from arena.runners.metered_gateway import GatewayContainer, GatewayRuntimeError, RunGateway
 from arena.runners.scheduler import TrialJob, expand_jobs, run_jobs
 
 
@@ -99,6 +103,17 @@ def _jobs(
     return tasks, contestants, expand_jobs(tasks, contestants, repeats)
 
 
+def _prior_run_spend(db: Path, run_id: str) -> float:
+    """Metered spend already recorded for a run, so a resumed gateway keeps the cap."""
+    if not db.exists() or db.stat().st_size == 0:
+        return 0.0
+    with Store(db) as store:
+        row = store.execute(
+            "SELECT COALESCE(SUM(cost_usd), 0) FROM calls WHERE run_id=?", (run_id,)
+        ).fetchone()
+    return float(row[0]) if row is not None else 0.0
+
+
 @app.command("plan")
 def plan(
     suite: Annotated[str, typer.Argument(help="Suite directory or suites/<name> path.")],
@@ -135,8 +150,11 @@ def run(
     max_concurrency: Annotated[int, typer.Option(min=1)] = 8,
     per_contestant: Annotated[int, typer.Option(min=1)] = 2,
     db: Annotated[Path, typer.Option(help="SQLite run store.")] = Path(".arena/arena.db"),
+    providers: Annotated[Path, typer.Option("--providers")] = Path("providers.yaml"),
+    catalog: Annotated[Path, typer.Option("--catalog")] = Path("catalog/models.yaml"),
+    home: Annotated[Path | None, typer.Option("--home")] = None,
 ) -> None:
-    """Execute completion trials with deterministic caching and resumability."""
+    """Execute deterministic mock or metered agent trials with resumability."""
     try:
         _, expanded, jobs = _jobs(str(suite), contestants, repeats)
     except (OSError, ValueError, yaml.YAMLError) as error:
@@ -144,7 +162,7 @@ def run(
         raise typer.Exit(code=1) from error
     try:
         suite_dir = _suite_dir(suite)
-        models = _catalog_models(Path("catalog/models.yaml"))
+        models = _catalog_models(catalog)
     except (OSError, ValueError, yaml.YAMLError) as error:
         typer.echo(str(error), err=True)
         raise typer.Exit(code=1) from error
@@ -154,6 +172,64 @@ def run(
         "repeats": repeats,
     }
     run_id = resume_id or content_id(run_config)
+    non_mock = sorted(
+        {
+            contestant.model.provider
+            for contestant in expanded
+            if contestant.model.provider != "mock"
+        }
+    )
+    non_mock_jobs = [
+        job
+        for job in jobs
+        if job.contestant.model.provider != "mock" and job.contestant.scaffold is not None
+    ]
+    completion_jobs = [
+        job
+        for job in jobs
+        if job.contestant.model.provider != "mock" and job.contestant.scaffold is None
+    ]
+    if completion_jobs and not dry_run:
+        for job in completion_jobs:
+            model = models.get(str(job.contestant.model))
+            if model is None or (
+                model.pricing != "subscription"
+                and (
+                    model.price_per_mtok is None
+                    or model.price_per_mtok.get("in", 0) <= 0
+                    or model.price_per_mtok.get("out", 0) <= 0
+                )
+            ):
+                typer.echo(f"error: no usable catalog price for {job.contestant.model}", err=True)
+                raise typer.Exit(code=2)
+        typer.echo(
+            "error: non-mock completion contestants remain unsupported; "
+            "configure an agent scaffold",
+            err=True,
+        )
+        raise typer.Exit(code=2)
+    if non_mock_jobs:
+        for job in non_mock_jobs:
+            model = models.get(str(job.contestant.model))
+            if model is None or (
+                model.pricing != "subscription"
+                and (
+                    model.price_per_mtok is None
+                    or model.price_per_mtok.get("in", 0) <= 0
+                    or model.price_per_mtok.get("out", 0) <= 0
+                )
+            ):
+                typer.echo(f"error: no usable catalog price for {job.contestant.model}", err=True)
+                raise typer.Exit(code=2)
+            try:
+                token_for_trial(content_id({"run_id": run_id, "job_id": job.id}))
+                adapter_for(job.contestant)
+            except ValueError as error:
+                typer.echo(f"error: invalid agent contestant: {error}", err=True)
+                raise typer.Exit(code=2) from error
+    if non_mock_jobs and not dry_run and (budget_usd is not None and not 0 < budget_usd <= 20):
+        typer.echo("error: non-mock run budget must be greater than $0 and at most $20", err=True)
+        raise typer.Exit(code=2)
 
     def estimate(job: TrialJob) -> float | None:
         model = models.get(str(job.contestant.model))
@@ -175,8 +251,10 @@ def run(
     async def execute(job: TrialJob) -> CompletionResult:
         task_path = task_paths[job.task.id]
         prompt_path = task_path.parent / job.task.prompt_file
-        prompt = prompt_path.read_text(encoding="utf-8")
-        return await mock_completion(job.contestant, job.task, prompt)
+        if job.contestant.model.provider == "mock":
+            prompt = prompt_path.read_text(encoding="utf-8")
+            return await mock_completion(job.contestant, job.task, prompt)
+        raise RuntimeError("non-mock agent execution requires the run gateway lifecycle")
 
     if dry_run:
         summary = asyncio.run(
@@ -191,21 +269,121 @@ def run(
             )
         )
     else:
-        with Store(db) as store:
-            summary = asyncio.run(
-                run_jobs(
-                    store,
-                    run_id,
-                    jobs,
-                    execute,
-                    resume=resume_id is not None,
-                    run_config=run_config,
-                    budget_usd=budget_usd,
-                    estimate_cost=estimate,
-                    max_concurrency=max_concurrency,
-                    per_contestant=per_contestant,
+        try:
+            providers_config = load_providers(providers) if non_mock else None
+            gateway_container: GatewayContainer | None = None
+            remaining_budget = budget_usd or 20.0
+            if non_mock:
+                assert providers_config is not None
+                if any(job.contestant.scaffold is None for job in non_mock_jobs):
+                    raise GatewayRuntimeError(
+                        "non-mock contestants must select a configured agent scaffold"
+                    )
+                remaining_budget -= _prior_run_spend(db, run_id)
+                if remaining_budget <= 0:
+                    raise GatewayRuntimeError(
+                        "the run budget is already spent by calls recorded before resume"
+                    )
+                gateway_container = GatewayContainer(
+                    project_root=Path.cwd(),
+                    run_id=run_id,
+                    trial_models={
+                        content_id({"run_id": run_id, "job_id": job.id}): (
+                            f"{job.contestant.model.provider}/{job.contestant.model.model}"
+                        )
+                        for job in non_mock_jobs
+                    },
+                    providers_path=providers,
+                    catalog_path=catalog,
+                    database_path=db,
+                    event_root=db.parent / "events",
+                    subscriptions_root=(home or Path(".arena")) / "subscriptions",
+                    budget_usd=remaining_budget,
+                    providers=providers_config,
+                    provider_ids={job.contestant.model.provider for job in non_mock_jobs},
                 )
-            )
+                gateway_container.preflight(
+                    [adapter_for(job.contestant).image for job in non_mock_jobs]
+                )
+            if gateway_container is not None:
+                db.parent.mkdir(parents=True, exist_ok=True)
+                db.touch(exist_ok=True)
+                try:
+                    gateway_container.start()
+                    if not gateway_container.running:
+                        raise GatewayRuntimeError("gateway did not enter the running state")
+                except (GatewayRuntimeError, OSError) as error:
+                    typer.echo(f"error: gateway preflight failed: {error}", err=True)
+                    raise typer.Exit(code=2) from error
+            try:
+                with Store(db) as store:
+                    if gateway_container is not None:
+                        gateway = RunGateway(run_id, store, db.parent / "events")
+                        artifact_store = ArtifactStore(db.parent / "artifacts")
+
+                        async def execute_with_gateway(job: TrialJob) -> CompletionResult:
+                            task_path = task_paths[job.task.id]
+                            if job.contestant.model.provider == "mock":
+                                task_prompt = task_path.parent / job.task.prompt_file
+                                return await mock_completion(
+                                    job.contestant,
+                                    job.task,
+                                    task_prompt.read_text(encoding="utf-8"),
+                                )
+                            model = models.get(str(job.contestant.model))
+                            if model is None:
+                                raise GatewayRuntimeError(
+                                    f"model is missing from the catalog: {job.contestant.model}"
+                                )
+                            if model.pricing == "subscription":
+                                raise GatewayRuntimeError(
+                                    "subscription accounting requires an imported account runtime"
+                                )
+                            budget = remaining_budget
+                            if (
+                                model.price_per_mtok is None
+                                or model.price_per_mtok.get("in", 0) <= 0
+                                or model.price_per_mtok.get("out", 0) <= 0
+                            ):
+                                raise GatewayRuntimeError(
+                                    f"model has no usable catalog price: {job.contestant.model}"
+                                )
+                            return await execute_agent_trial(
+                                job,
+                                run_id,
+                                task_file=task_path.parent / job.task.prompt_file,
+                                workspace_root=db.parent / "workspaces",
+                                store=store,
+                                artifacts=artifact_store,
+                                gateway=gateway,
+                                gateway_url=gateway_container.url,
+                                gateway_container=gateway_container.name,
+                                budget_usd=budget,
+                            )
+
+                        executor = execute_with_gateway
+                    else:
+                        executor = execute
+                    summary = asyncio.run(
+                        run_jobs(
+                            store,
+                            run_id,
+                            jobs,
+                            executor,
+                            resume=resume_id is not None,
+                            run_config=run_config,
+                            budget_usd=budget_usd,
+                            estimate_cost=estimate,
+                            max_concurrency=max_concurrency,
+                            per_contestant=1 if gateway_container is not None else per_contestant,
+                        )
+                    )
+            finally:
+                if gateway_container is not None:
+                    gateway_container.stop()
+        except (OSError, ValueError, GatewayRuntimeError) as error:
+            typer.echo(f"error: agent run failed before completion: {error}", err=True)
+            raise typer.Exit(code=2) from error
     typer.echo(
         f"Run {run_id}: planned={summary.planned} created={summary.created} "
         f"completed={summary.completed} cache_hits={summary.cache_hits} skipped={summary.skipped}"

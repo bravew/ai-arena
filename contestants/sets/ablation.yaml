@@ -1,0 +1,10 @@
+# Kit ablation for suites/skill-ablation: the same model and agent with kit none vs team-coding@3.
+# 1 model x 1 agent x 2 kits = 2 contestants forming 1 ablation pair.
+matrix:
+  model: [anthropic/claude-sonnet-4-5]
+  scaffold: [{ id: claude-code, version: 2.4.1 }]
+  kit: [none, kits/team-coding@3]
+kits:
+  kits/team-coding@3: 3fdba3df7b2d418c634438d9cd39d94885709c6c6638ca170b060c21c7ad3035
+ablation: kit
+orchestration: single

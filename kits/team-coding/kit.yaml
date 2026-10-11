@@ -1,0 +1,7 @@
+id: team-coding
+version: 3
+instructions: instructions.md
+skills:
+  - path: skills/tdd-loop
+mcp: []
+settings: {}

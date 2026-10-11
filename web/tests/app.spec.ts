@@ -43,3 +43,10 @@ test('validates an imported bundle and presents schema errors clearly', async ({
   });
   await expect(page.getByRole('alert')).toContainText('invalid JSON');
 });
+
+test('sidebar reaches the Judges view', async ({ page }) => {
+  await page.goto('/');
+  await page.getByRole('link', { name: 'Judges' }).click();
+  await expect(page).toHaveURL(/\/judges$/);
+  await expect(page.getByRole('heading', { name: 'Judges', level: 2 })).toBeVisible();
+});

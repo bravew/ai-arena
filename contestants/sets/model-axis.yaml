@@ -1,0 +1,17 @@
+# Model axis: which model is best? Hold the harness, its system prompt and the kit fixed.
+# 4 models x 2 harnesses (OpenCode default, Pi minimal baseline) = 8 contestants.
+matrix:
+  model:
+    - anthropic/claude-opus-5-5:high
+    - openai/gpt-x:medium
+    - google/gemini-3-pro:high
+    - openrouter/qwen/qwen3-coder
+  scaffold:
+    - { id: opencode, version: 1.2.0 }
+    - { id: pi, version: 0.99.2 }
+kit: kits/team-coding@3
+# The kit's content hash. A test fails when kits/team-coding changes and this does not.
+kits:
+  kits/team-coding@3: 3fdba3df7b2d418c634438d9cd39d94885709c6c6638ca170b060c21c7ad3035
+scaffold_prompt: pinned
+orchestration: single

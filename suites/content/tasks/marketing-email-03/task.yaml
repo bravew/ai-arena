@@ -1,0 +1,8 @@
+id: content.marketing-email-03
+version: 1
+kind: content
+created_at: 2026-10-08
+prompt_file: prompt.md
+scorers:
+  - { id: rubric-judge, rubric: rubrics/content-writing-v1.yaml, weight: 1.0 }
+pairwise: true

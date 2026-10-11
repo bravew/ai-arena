@@ -132,40 +132,72 @@ def test_ledger_preserves_colon_in_non_effort_model_name(tmp_path: Path) -> None
 
 
 def test_subscription_cost_is_unknown_and_budget_only_counts_api_spend(tmp_path: Path) -> None:
-    call = _call().model_copy(update={"id": "c2", "model_asked": "anthropic/claude-opus-5-5-sub"})
-    with Store(tmp_path / "arena.db") as store:
-        store.execute("INSERT INTO runs(id, config_json, status) VALUES ('r1', '{}', 'running')")
-        store.execute(
-            "INSERT INTO trials(id, run_id, contestant_id, task_id, status) "
-            "VALUES ('t1', 'r1', 'contestant', 'task', 'running')"
+    async def run() -> None:
+        call = _call().model_copy(
+            update={"id": "c2", "model_asked": "anthropic/claude-opus-5-5-sub"}
         )
-        ledger = CallsLedger(store, _catalog())
-        recorded = ledger.record(call)
-        assert recorded.cost_usd is None
-        budget = Budget()
-        asyncio.run(budget.record_call(recorded, EventLog(tmp_path / "events"), subscription=True))
-        budget.record_compute_cost(1.25)
-        report = budget.report()
-        assert report.metered_spend_usd == 0
-        assert report.subscription_tokens == 1_100_000
-        assert report.compute_cost_usd == 1.25
+        with Store(tmp_path / "arena.db") as store:
+            store.execute(
+                "INSERT INTO runs(id, config_json, status) VALUES ('r1', '{}', 'running')"
+            )
+            store.execute(
+                "INSERT INTO trials(id, run_id, contestant_id, task_id, status) "
+                "VALUES ('t1', 'r1', 'contestant', 'task', 'running')"
+            )
+            ledger = CallsLedger(store, _catalog())
+            recorded = ledger.record(call)
+            assert recorded.cost_usd is None
+            budget = Budget()
+            subscription_events = EventLog(tmp_path / "events")
+            reservation = await budget.check_call(
+                recorded.model_copy(update={"tokens": Tokens()}),
+                subscription_events,
+                subscription=True,
+            )
+            await reservation.settle(None, final_call=recorded)
+            budget.record_compute_cost(1.25)
+            report = budget.report()
+            assert report.metered_spend_usd == 0
+            assert report.subscription_tokens == 1_100_000
+            assert report.compute_cost_usd == 1.25
+
+    asyncio.run(run())
 
 
-def test_budget_reserves_spend_for_concurrent_calls(tmp_path: Path) -> None:
+def test_budget_reserves_remaining_cap_before_metered_dispatch(tmp_path: Path) -> None:
     async def run() -> None:
         budget = Budget()
         events = EventLog(tmp_path / "events")
         accepted = await budget.check_call(
-            _call(call_id="c1").model_copy(update={"cost_usd": 12.0}), events
+            _call(call_id="c1").model_copy(update={"cost_usd": 0.0}),
+            events,
+            reserve_remaining=True,
         )
-        with pytest.raises(BudgetExceeded):
+        assert budget.report().remaining_usd == 0.0
+        with pytest.raises(BudgetExceeded, match="another call holds"):
             await budget.check_call(
-                _call(call_id="c2").model_copy(update={"cost_usd": 9.0}), events
+                _call(call_id="c2").model_copy(update={"cost_usd": 0.0}),
+                events,
+                reserve_remaining=True,
             )
-        assert budget.report().remaining_usd == 8.0
         await accepted.settle(10.0)
         assert budget.metered_spend_usd == 10.0
         assert budget.report().remaining_usd == 10.0
+
+        exact_cap = await budget.check_call(
+            _call(call_id="c3").model_copy(update={"cost_usd": 0.0}),
+            events,
+            reserve_remaining=True,
+        )
+        await exact_cap.settle(10.0)
+        assert budget.metered_spend_usd == 20.0
+        assert budget.report().remaining_usd == 0.0
+        with pytest.raises(BudgetExceeded, match="budget is exhausted"):
+            await budget.check_call(
+                _call(call_id="c4").model_copy(update={"cost_usd": 0.0}),
+                events,
+                reserve_remaining=True,
+            )
 
     asyncio.run(run())
 
@@ -184,14 +216,18 @@ def test_budget_rejects_unpriced_metered_call(tmp_path: Path) -> None:
 def test_budget_records_actual_over_reservation_charge_before_raising(tmp_path: Path) -> None:
     async def run() -> None:
         budget = Budget()
-        reservation = await budget.check_call(
-            _call().model_copy(update={"cost_usd": 5.0}), EventLog(tmp_path / "events")
-        )
+        events = EventLog(tmp_path / "events")
+        reservation = await budget.check_call(_call().model_copy(update={"cost_usd": 5.0}), events)
         with pytest.raises(BudgetExceeded, match="actual charge"):
             await reservation.settle(6.0)
         assert budget.metered_spend_usd == 6.0
         assert budget.report().remaining_usd == 14.0
         assert budget._reserved == {}
+        with pytest.raises(BudgetExceeded, match="actual charge"):
+            await budget.check_call(
+                _call(call_id="c2").model_copy(update={"cost_usd": 0.01}),
+                events,
+            )
 
     asyncio.run(run())
 

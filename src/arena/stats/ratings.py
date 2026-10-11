@@ -196,7 +196,8 @@ def _fit(
 def _simulate(
     edge: PairwiseJudgment, strengths: dict[str, float], rng: random.Random
 ) -> PairwiseJudgment:
-    probability = strengths[edge.left] / (strengths[edge.left] + strengths[edge.right])
+    # `strengths` holds log-strengths, as returned by `_fit`.
+    probability = 1 / (1 + math.exp(strengths[edge.right] - strengths[edge.left]))
     outcome: Literal["left", "right"] = "left" if rng.random() < probability else "right"
     return PairwiseJudgment(edge.left, edge.right, outcome, edge.judge, edge.task_id)
 
