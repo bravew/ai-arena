@@ -18,6 +18,7 @@ plug into this framework in their own PRs and extend this page.
 | Blobs | Content-addressed artifact bytes, `artifacts/<sha256>`. | [`ArtifactStore`](../../src/arena/core/cas.py) |
 | `scores` table | One row per `(trial, scorer_id, scorer_version)`. | [`001_initial.sql`](../../src/arena/core/migrations/001_initial.sql) |
 | `trial_artifacts` table | One row per `(trial, path)` with its digest, MIME type and render hint. | [`002_trial_artifacts.sql`](../../src/arena/core/migrations/002_trial_artifacts.sql) |
+| Pairwise judgment store | `Judgment` rows are upserted atomically by ordered trial pair, task, judge ID and version. The reader validates the stored evidence JSON. | [`save_judgments`, `get_judgment`, `list_judgments`](../../src/arena/judges/judgment_store.py), [`003_judgments.sql`](../../src/arena/core/migrations/003_judgments.sql) |
 
 ## Runtime path
 
@@ -73,11 +74,19 @@ plug into this framework in their own PRs and extend this page.
 
 Playwright is an optional, lazily imported dependency; this change does not add it to `pyproject.toml` or `uv.lock`. To use the real browser adapter, install Playwright and Chromium in the runtime environment. Browser launch or capture failures raise `CaptureError` (a `ScorerError`) and produce no score or screenshot writes. The artifact response CSP disables network access, scripts beyond inline scripts, and same-origin access. The loopback server serves only the selected artifact path.
 
-## Verification
+## Pairwise judgment persistence
+
+`save_judgments` writes a batch in one transaction and replaces a row with the same ordered pair, task, judge ID and version. Each trial must exist and belong to the judgment task. `get_judgment` reads one exact key; `list_judgments` lists a task in key order. The `judgments` table retains the raw first and swapped positional verdicts, normalized winner, rationale, bias/flip flag and full evidence.
+
+`arena score` does not run `PairwiseJudge`: the command resolves registered single-trial `Scorer` objects, while `PairwiseJudge` compares two trial contexts and returns a `Judgment`, not a `Score`. Therefore the current command has no pairwise judge execution path to persist through; callers that run the pairwise judge can persist its result using `save_judgments`.
+
+### Verification
 
 ```sh
-uv run pytest tests/scorers/test_framework.py tests/scorers/test_visual.py
+uv run pytest tests/store tests/judges
 ```
+
+The other scoring tests are listed below.
 
 ## Execution scorers
 

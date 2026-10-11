@@ -1,0 +1,3 @@
+{"type":"session","sessionID":"ses_mock_recorded_partial"}
+{"type":"tool_use","part":{"tool":"read","state":{"input":{"filePath":"/home/agent/.claude/skills/review/SKILL.md"}}}}
+{"type":"text","part":{"text":"truncated
