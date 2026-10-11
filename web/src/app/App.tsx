@@ -15,6 +15,7 @@ import { TraceView } from '../views/trace/TraceView';
 import { RunDiffView } from '../views/rundiff/RunDiffView';
 import { LiveView } from '../views/live/LiveView';
 import { OpsView } from '../views/ops/OpsView';
+import { JudgesView } from '../views/judges/JudgesView';
 
 function CompareRoute() { const { bundle } = useBundleState(); return bundle ? <CompareView bundle={bundle} /> : <PlaceholderPage title="Compare trials" />; }
 function TraceRoute() { const { bundle } = useBundleState(); return bundle ? <TraceView bundle={bundle} /> : <PlaceholderPage title="Trace" />; }
@@ -40,6 +41,7 @@ const routeConfig = [
       { path: 'kit-effect', element: <KitEffectPage /> },
       { path: 'live', element: <LiveRoute /> },
       { path: 'ops', element: <OpsView /> },
+      { path: 'judges', element: <JudgesView /> },
       { path: '*', element: <PlaceholderPage title="Page not found" /> },
     ],
   },
