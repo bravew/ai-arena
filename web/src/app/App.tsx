@@ -14,7 +14,10 @@ import { CompareView } from '../views/compare/CompareView';
 import { TraceView } from '../views/trace/TraceView';
 import { RunDiffView } from '../views/rundiff/RunDiffView';
 import { LiveView } from '../views/live/LiveView';
+import { LeaderboardView } from '../views/leaderboard/LeaderboardView';
+import { ParetoView } from '../views/pareto/ParetoView';
 import { OpsView } from '../views/ops/OpsView';
+import { ProvidersView } from '../views/providers/ProvidersView';
 import { JudgesView } from '../views/judges/JudgesView';
 import { ArenaView } from '../views/arena/ArenaView';
 import { createHttpArenaSource } from '../views/arena/http-source';
@@ -41,8 +44,8 @@ const routeConfig = [
     element: <AppLayout />,
     children: [
       { index: true, element: <HomePage /> },
-      { path: 'leaderboard', element: <PlaceholderPage title="Leaderboard" /> },
-      { path: 'pareto', element: <PlaceholderPage title="Pareto frontier" /> },
+      { path: 'leaderboard', element: <LeaderboardPage /> },
+      { path: 'pareto', element: <ParetoPage /> },
       { path: 'matrix', element: <PlaceholderPage title="Task matrix" /> },
       { path: 'compare', element: <CompareRoute /> },
       { path: 'trace', element: <TraceRoute /> },
@@ -51,6 +54,7 @@ const routeConfig = [
       { path: 'kit-effect', element: <KitEffectPage /> },
       { path: 'live', element: <LiveRoute /> },
       { path: 'ops', element: <OpsView /> },
+      { path: 'providers', element: <ProvidersView /> },
       { path: 'judges', element: <JudgesView /> },
       { path: 'vote', element: <ArenaView dataSource={arenaSource} /> },
       { path: '*', element: <PlaceholderPage title="Page not found" /> },
@@ -61,6 +65,17 @@ const routeConfig = [
 const router = window.location.protocol === 'file:'
   ? createHashRouter(routeConfig)
   : createBrowserRouter(routeConfig);
+
+
+function LeaderboardPage() {
+  const { bundle } = useBundleState();
+  return bundle ? <LeaderboardView bundle={bundle} /> : <PlaceholderPage title="Leaderboard" />;
+}
+
+function ParetoPage() {
+  const { bundle } = useBundleState();
+  return bundle ? <ParetoView bundle={bundle} /> : <PlaceholderPage title="Pareto frontier" />;
+}
 
 function SessionsPage() {
   const { bundle } = useContext(BundleContext) ?? {};

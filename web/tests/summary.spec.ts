@@ -8,7 +8,7 @@ import { contestantColor } from '../src/theme';
 const bundle = JSON.parse(readFileSync(resolve(process.cwd(), '../fixtures/bundles/schema-example.json'), 'utf8')) as Bundle;
 const scoredBundle: Bundle = {
   ...bundle,
-  scores: [...bundle.scores, ...bundle.trials.filter((trial) => trial.contestant_id !== 'c-ablation-base').map((trial) => ({ ...bundle.scores[0]!, trial_id: trial.id }))],
+  scores: [...bundle.scores, ...bundle.trials.filter((trial) => trial.contestant_id !== 'c-ablation-base' && !bundle.scores.some((score) => score.trial_id === trial.id)).map((trial) => ({ ...bundle.scores[0]!, trial_id: trial.id }))],
 };
 const repeatedBundle: Bundle = {
   ...scoredBundle,
@@ -71,3 +71,20 @@ test('summary routes resolve in the shared application shell', async ({ page }) 
   await page.goto('/matrix');
   await expect(page.getByRole('heading', { name: 'Task matrix', level: 2 })).toBeVisible();
 });
+
+
+test('serving labels separate API, gateway subscription, and vendor CLI', () => {
+  const mixed: Bundle = {
+    ...scoredBundle,
+    trials: [...scoredBundle.trials, { ...scoredBundle.trials[0]!, id: 'trial-api-base', contestant_id: 'c-ablation-base' }],
+    calls: [
+      ...scoredBundle.calls,
+      { ...scoredBundle.calls[0]!, id: 'call-cli', trial_id: 'trial-base', provider: 'anthropic', upstream: 'cli_reported', cost_usd: null },
+      { ...scoredBundle.calls[0]!, id: 'call-api', trial_id: 'trial-api-base', provider: 'anthropic', upstream: null, cost_usd: 0.01 },
+    ],
+  };
+  const summaries = calculateSummaries(mixed);
+  expect(summaries.find((item) => item.contestant.id === 'c-subscription')).toMatchObject({ serving: 'subscription (gateway)', costPerTask: 'flat' });
+  expect(summaries.find((item) => item.contestant.id === 'c-ablation-base')).toMatchObject({ serving: 'mixed serving', costPerTask: 'flat' });
+});
+

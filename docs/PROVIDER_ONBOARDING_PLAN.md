@@ -131,20 +131,23 @@ uv run arena run suites/smoke -c contestants/sets/providers-compare.yaml --budge
 The Ops page shows the same detect and test results, the accounts and their
 meters, and the live calls.
 
-## 4. Decisions needed from the maintainer
+## 4. Decisions
 
-| ID | Decision | Default in this plan |
+Decided by the maintainer on 2026-10-11.
+
+| ID | Decision | Outcome |
 | --- | --- | --- |
-| D1 | AGENTS.md says agent config is written only inside trial containers. `local-cli` runs the vendor CLI on the host. Allow it, with a per-trial scratch home and workspace, as the one named exception? | Yes, host-run only for subscription vendors, scratch dirs deleted after the trial |
-| D2 | Which runtime serves which vendor? Vendors may refuse subscription tokens used by a non-vendor client | Claude `local-cli`, ChatGPT `gateway`, both overridable. The spike confirms |
-| D3 | Sign-in discovery reads existing CLI sign-ins and the macOS Keychain. On or off by default? | Off. `arena providers add` and explicit `import` only |
-| D4 | First use of a subscription provider needs a recorded acknowledgement of the vendor terms | Required, stored per provider, recorded in the ledger |
+| D1 | AGENTS.md says agent config is written only inside trial containers. `local-cli` runs the vendor CLI on the host. Allow it, with a per-trial scratch home and workspace, as the one named exception? | **Yes.** Host-run only for subscription vendors. Scratch dirs are deleted after every outcome, and the user's real agent configs are never written |
+| D2 | Which runtime serves which vendor? Vendors may refuse subscription tokens used by a non-vendor client | **The vendor's own CLI (`local-cli`) for both Claude and ChatGPT.** The ChatGPT `gateway` adapter (sub-issue 5) is parked until its URL, headers and terms are confirmed |
+| D3 | Sign-in discovery reads existing CLI sign-ins and the macOS Keychain. On or off by default? | **On by default**, read-only. Discovery lists the sign-ins it finds by redacted id and copies nothing. Reading the macOS Keychain item prompts the user, so it happens only on an explicit `import`. An environment switch forces discovery off |
+| D4 | First use of a subscription provider needs a recorded acknowledgement of the vendor terms | **Not required.** No prompt and no stored record. The README and `providers add` output warn that automated use of a consumer plan may breach vendor terms |
 
 ## 5. Risks
 
 - **Terms of service.** Automated evaluation on a consumer plan may breach vendor
   terms and get an account limited. Mitigations are the explicit provider
-  declaration, the acknowledgement in D4, and the vendor-key preference in §5.8.
+  declaration, the warning shown by `providers add` (D4 chose no recorded
+  acknowledgement), and the vendor-key preference in §5.8.
 - **CLI drift.** Flags, output events and sign-in file layouts change between
   versions. Mitigations are pinned minimum versions, contract tests on recorded
   real output, and a typed `incompatible_version` result.
@@ -174,8 +177,8 @@ sub-issue finds it needs a schema change, it asks in its PR.
 | 1 | Spike: record the real CLI and sign-in contracts | `fixtures/cli-contracts/**`, `docs/subsystems/provider-runtimes.md` | none |
 | 2 | Provider config: auth modes, runtime field, ChatGPT provider | `src/arena/providers/config.py`, `providers.yaml`, `docs/subsystems/providers-catalog.md` | 1 |
 | 3 | Runtime detection and connection test (`providers detect`, doctor) | `src/arena/providers/runtimes/**`, `src/arena/cli_providers.py` | 1, 2 |
-| 4 | Account onboarding: add, import, list, forget, terms acknowledgement | `src/arena/providers/accounts/**`, `src/arena/cli_accounts.py` | 1, 2 |
-| 5 | ChatGPT/Codex subscription adapter in the gateway | `src/arena/gateway/endpoints.py`, `src/arena/providers/subscriptions/chatgpt.py` | 1, 2 |
+| 4 | Account onboarding: add, import, list, forget, discovery (D3), terms warning (D4) | `src/arena/providers/accounts/**`, `src/arena/cli_accounts.py` | 1, 2 |
+| 5 | ChatGPT/Codex subscription adapter in the gateway (parked by D2) | `src/arena/gateway/endpoints.py`, `src/arena/providers/subscriptions/chatgpt.py` | 1, 2 |
 | 6 | `local-cli` runner for Claude and Codex | `src/arena/runners/local_cli.py`, `src/arena/agents/local/**` | 1, 2, 3 |
 | 7 | CLI-reported usage into the Calls ledger and events | `src/arena/obs/cli_usage.py`, `src/arena/runners/usage_capture.py` | 6 |
 | 8 | `arena run` and scheduler: allow subscription contestants | `src/arena/cli_run.py`, `src/arena/runners/scheduler.py`, `src/arena/runners/metered_gateway.py` | 4, 5, 6, 7 |

@@ -20,4 +20,15 @@ providers:
       vendor: claude
       plan: max
       import: own-sign-in
+      runtime: local-cli
+    limits: {concurrency: 2}
+  - id: openai-plus
+    keys: []
+    subscription:
+      vendor: chatgpt
+      plan: plus
+      import: own-sign-in
+      # The vendor's own Codex CLI serves this one. The ChatGPT backend URL and headers for
+      # the gateway runtime are not confirmed (docs/subsystems/provider-runtimes.md).
+      runtime: local-cli
     limits: {concurrency: 2}

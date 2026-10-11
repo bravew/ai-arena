@@ -6,6 +6,7 @@ import asyncio
 import json
 import time
 from collections.abc import Awaitable, Callable, Sequence
+from contextlib import nullcontext
 from dataclasses import dataclass
 from typing import Any
 
@@ -50,6 +51,8 @@ class SubscriptionRest(RuntimeError):
 
 
 Countdown = Callable[[str, int], None]
+# A shared concurrency lane for jobs on one subscription account: (account key, limit).
+LaneFor = Callable[["TrialJob"], tuple[str, int] | None]
 Executor = Callable[[TrialJob], Awaitable[CompletionResult]]
 
 
@@ -124,6 +127,7 @@ async def run_jobs(
     budget_usd: float | None = None,
     estimate_cost: Callable[[TrialJob], float | None] | None = None,
     on_countdown: Countdown | None = None,
+    lane_for: LaneFor | None = None,
     clock: Callable[[], float] = time.time,
     sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
 ) -> RunSummary:
@@ -153,6 +157,14 @@ async def run_jobs(
     locks: dict[str, asyncio.Semaphore] = {}
     for job in pending:
         locks.setdefault(job.contestant.id, asyncio.Semaphore(per_contestant))
+    lane_locks: dict[str, asyncio.Semaphore] = {}
+    if lane_for is not None:
+        for job in pending:
+            lane = lane_for(job)
+            if lane is not None:
+                if lane[1] < 1:
+                    raise ValueError("lane limits must be positive")
+                lane_locks.setdefault(lane[0], asyncio.Semaphore(lane[1]))
     gate = asyncio.Semaphore(max_concurrency)
     spend = 0.0
     reserved = 0.0
@@ -161,7 +173,9 @@ async def run_jobs(
 
     async def execute(job: TrialJob) -> None:
         nonlocal spend, reserved, completed, skipped
-        async with gate, locks[job.contestant.id]:
+        lane = lane_for(job) if lane_for is not None else None
+        lane_lock = lane_locks[lane[0]] if lane is not None else nullcontext()
+        async with gate, lane_lock, locks[job.contestant.id]:
             estimate = estimate_cost(job) if estimate_cost is not None else None
             async with spent_lock:
                 if (

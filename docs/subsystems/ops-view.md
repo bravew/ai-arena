@@ -9,21 +9,24 @@
 | Lanes and rests | Display in-flight versus concurrency, queued calls and any active rest countdown | [`OpsView`](../../web/src/views/ops/OpsView.tsx) |
 | Subscription meters | Display usage against a meter limit and time remaining until its reset | [`OpsView`](../../web/src/views/ops/OpsView.tsx) |
 | Hook stats | Show hook call count, failures and average duration | [`OpsView`](../../web/src/views/ops/OpsView.tsx) |
-| Fixture adapter | Supply deterministic data through the replaceable `OpsDataSource` interface; its lane fields follow the documented gateway snapshot shape | [`fixtureOps`](../../web/src/views/ops/fixtures.ts), [`OpsDataSource`](../../web/src/views/ops/fixtures.ts) |
+| HTTP adapter | Fetch the authenticated server's `/api/ops` snapshot with same-origin credentials | [`fetchOpsSnapshot`](../../web/src/views/ops/http-source.ts) |
+| Fixture adapter | Supply deterministic data when a component test injects it or the live snapshot cannot load | [`fixtureOps`](../../web/src/views/ops/fixtures.ts), [`OpsDataSource`](../../web/src/views/ops/fixtures.ts) |
+| Server route | Read the calls ledger, aggregate arena-counted tokens, list redacted stored accounts and report vendor CLI status | [`register_ops_routes`](../../src/arena/server/ops.py) |
 
 ## Runtime path
 
 1. The router mounts `OpsView` at `/ops`.
-2. `OpsView` reads calls, lane snapshots, precomputed series, subscription meters and hook totals from the injected `OpsDataSource` (the current default is `fixtureOps`).
-3. Call filters are applied in the view, then the table renders token totals and cost/latency values. Usage and latency chart marks use the series values as received.
-4. Lane and account reset timestamps are compared with the current time to show countdowns. Hook statistics are presented as supplied.
+2. Without an injected source, `OpsView` requests `/api/ops` with same-origin credentials. The server's normal authentication check protects this route; off-box use requires a run key and session.
+3. The server returns the latest 200 calls, one usage and mean-latency point per run, arena-counted token meters, redacted stored accounts, and cached vendor CLI status probes. Calls from API-key providers and `cli_reported` calls from Claude or Codex share the ledger while retaining their provider and protocol attribution. There is no vendor quota endpoint in this runtime.
+4. Calls and subscription meters are live. Lanes and hooks are empty and each has a source explanation because the viewer process has no live gateway lane snapshot or hook instrumentation. An HTTP error is shown in the page, with fixture values retained as fallback.
 
 ## Constraints and failure behavior
 
-- Lane records use the gateway `/arena/lanes` `lanes` envelope fields `in_flight`, `queued`, `concurrency`, `resting_until` and `rest_class`. Gateway `/arena/stats` metrics are precomputed by its metrics registry; this fixture UI does not derive historical series from raw counters.
-- The view uses fixture data by default and makes no live gateway requests. It does not imply that live health, lane state, hook instrumentation or vendor subscription meters were exercised. The replaceable `OpsDataSource` is the future adapter seam for calls, lanes, precomputed usage, meters and hooks.
-- The #134 real-gateway exercise criterion is dropped: this checkout's `arena serve` exposes bundle and event APIs, but has no gateway `/arena/lanes` route or ledger snapshot endpoint, and the viewer has no authenticated gateway adapter. Fixture regressions cover the rendered lane and ledger fields; they do not count as real gateway exercise. Adding the gateway routes and viewer authentication/adapter crosses issue ownership and remains future integration work.
-- A missing cost is displayed as `flat`; it is not converted to zero. Meter, lane and hook values have no live-source error state until a live data adapter is integrated.
+- The route returns the latest 200 ledger calls and groups up to 5,000 ledger calls into per-run usage and mean latency. The ledger stores run creation timestamps, not call timestamps, so the series is explicitly a run-level summary.
+- A successful call without a recorded price contributes its tokens to a meter grouped by provider, redacted account id and model. The label says `arena-counted`; limits and reset times are null because vendor quotas are not queried. Missing call cost remains `flat` in the table.
+- Provider status uses only the read-only CLI probes from `providers detect`, and the results are cached for 30 seconds. The response contains status, auth state, binary path, version, detail and recovery hint, never a sign-in payload, token, environment value or API key.
+- Lanes remain empty until the server has a live gateway snapshot API. Hooks remain empty until hook instrumentation is connected. `sources` describes both gaps and the origin of every supplied metric.
+- The route is GET-only and uses the server's standard auth path. In remote mode, that path requires the run key session; browser cross-origin protections remain enforced by the base server.
 
 ## Verification
 

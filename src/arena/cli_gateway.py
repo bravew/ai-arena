@@ -15,9 +15,17 @@ import typer
 import uvicorn
 
 from arena.catalog.config import load_catalog
+from arena.cli_accounts import account_store, add_command, forget_command, list_command
+from arena.cli_providers import (
+    check_local_cli_provider,
+    doctor_lines,
+    echo_detect,
+    models_command,
+)
 from arena.gateway.bench import benchmark_mock
 from arena.gateway.endpoints import EndpointResolver
 from arena.gateway.litellm_adapter import create_production_app
+from arena.providers.accounts import AccountError, KeychainError, read_claude_keychain
 from arena.providers.config import Provider, load_providers
 from arena.providers.subscriptions import (
     SubscriptionError,
@@ -86,10 +94,19 @@ def build_gateway_app(
 
 @providers_app.command("detect")
 def detect_provider(
-    url: Annotated[str, typer.Argument(help="Provider base URL to probe.")],
+    url: Annotated[
+        str | None,
+        typer.Argument(help="Provider base URL to probe. Leave out to check the vendor CLIs."),
+    ] = None,
     timeout: Annotated[float, typer.Option("--timeout", min=0.1)] = 3.0,
+    json_output: Annotated[
+        bool, typer.Option("--json", help="Print the CLI check as JSON.")
+    ] = False,
 ) -> None:
-    """Probe a base URL for supported OpenAI-compatible or Anthropic APIs."""
+    """Probe a base URL for supported APIs, or with no URL report the claude and codex CLIs."""
+    if url is None:
+        echo_detect(json_output=json_output)
+        return
     results = _probe_protocols(url, timeout)
     detected = [protocol for protocol, ok in results.items() if ok]
     if detected:
@@ -115,6 +132,12 @@ def test_providers(
     failures = 0
     for provider in providers.providers:
         if not provider.enabled or provider.kind is not None:
+            continue
+        if provider.subscription is not None and provider.subscription.runtime == "local-cli":
+            passed, lines = check_local_cli_provider(provider)
+            for line in lines:
+                typer.echo(line)
+            failures += not passed
             continue
         if provider.subscription is not None:
             typer.echo(
@@ -150,6 +173,11 @@ def test_providers(
         raise typer.Exit(code=1)
 
 
+providers_app.command("models")(models_command)
+providers_app.command("add")(add_command)
+providers_app.command("list")(list_command)
+providers_app.command("forget")(forget_command)
+
 _VENDORS: tuple[Vendor, ...] = ("claude", "chatgpt", "copilot")
 
 
@@ -161,11 +189,21 @@ def _subscription_store(home: Path | None) -> SubscriptionStore:
 def providers_import(
     vendor: Annotated[str, typer.Argument()],
     sign_in: Annotated[
-        Path, typer.Option("--from", exists=True, dir_okay=False, help="Native CLI sign-in file.")
-    ],
+        Path | None,
+        typer.Option("--from", exists=True, dir_okay=False, help="Native CLI sign-in file."),
+    ] = None,
+    keychain: Annotated[
+        bool, typer.Option("--keychain", help="Claude on macOS: read the Keychain item.")
+    ] = False,
     home: Annotated[Path | None, typer.Option("--home")] = None,
 ) -> None:
-    """Copy a vendor CLI sign-in into the daemon's private subscription store."""
+    """Import a vendor sign-in: a file into the gateway store, or Claude's Keychain item."""
+    if keychain:
+        _import_keychain(vendor, home)
+        return
+    if sign_in is None:
+        typer.echo("error: give --from FILE, or --keychain for Claude on macOS", err=True)
+        raise typer.Exit(code=2)
     if vendor not in _VENDORS:
         typer.echo(f"error: unknown vendor {vendor!r}; use one of {', '.join(_VENDORS)}", err=True)
         raise typer.Exit(code=2)
@@ -175,6 +213,20 @@ def providers_import(
         typer.echo(f"error: {error}", err=True)
         raise typer.Exit(code=1) from error
     typer.echo(f"imported {account.display_name}; the source sign-in was not modified")
+
+
+def _import_keychain(vendor: str, home: Path | None) -> None:
+    """The one place the macOS Keychain is read, and only because the user asked."""
+    if vendor != "claude":
+        typer.echo("error: --keychain is for claude", err=True)
+        raise typer.Exit(code=2)
+    try:
+        sign_in = read_claude_keychain(dict(os.environ))
+        account = account_store(home).save("claude", sign_in, source="macos-keychain")
+    except (KeychainError, AccountError, OSError) as error:
+        typer.echo(f"error: {error}", err=True)
+        raise typer.Exit(code=1) from error
+    typer.echo(f"imported claude account {account.account_id}; the Keychain item was not modified")
 
 
 def create_doctor_command() -> Callable[..., None]:
@@ -203,6 +255,8 @@ def create_doctor_command() -> Callable[..., None]:
             typer.echo(
                 f"Arena home: {'writable' if directory.exists() else 'not created'} ({directory})"
             )
+        for line in doctor_lines():
+            typer.echo(line)
         if failures:
             raise typer.Exit(code=1)
 

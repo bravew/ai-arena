@@ -199,5 +199,11 @@ def test_provider_off_models_are_omitted() -> None:
     assert [item.ref for item in listed_models(PROVIDERS, CATALOG)] == [
         "anthropic/claude-opus-5-5",
         "anthropic/claude-sonnet-4-5",
-        "anthropic/claude-opus-5-5-sub",
     ]
+
+
+def test_local_cli_subscription_models_are_not_served_by_the_gateway() -> None:
+    with pytest.raises(ResolveError) as error:
+        resolve_target("openai-plus/gpt-6.1-sol", PROVIDERS, CATALOG)
+    assert error.value.failure is ResolveFailure.NOT_SERVED
+    assert "vendor's own CLI" in error.value.message

@@ -1,4 +1,7 @@
 .ops-view { display: grid; gap: 16px; }
+.ops-error { margin: 0; padding: 10px 12px; border: 1px solid var(--color-danger); border-radius: var(--radius-sm); color: var(--color-danger); font-size: 12px; }
+.ops-source-note { display: flex; flex-wrap: wrap; gap: 8px 14px; padding: 10px 12px; border: 1px solid var(--color-line); border-radius: var(--radius-sm); color: var(--color-ink-muted); font-size: 10px; }
+.ops-source-note strong { color: var(--color-ink); text-transform: capitalize; }
 .ops-panel { min-width: 0; padding: 18px; }
 .ops-heading { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; margin-bottom: 14px; }
 .ops-heading h2 { margin: 5px 0; font-size: 18px; letter-spacing: -.03em; }

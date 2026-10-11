@@ -43,10 +43,29 @@ class ProviderKey(ConfigModel):
         return self
 
 
+SubscriptionRuntime = Literal["gateway", "local-cli"]
+# Vendors whose own CLI contract is recorded in docs/subsystems/provider-runtimes.md.
+LOCAL_CLI_VENDORS = frozenset({"claude", "chatgpt"})
+
+
 class Subscription(ConfigModel):
+    """A subscription-backed provider.
+
+    `runtime` says who talks to the vendor: `gateway` (the daemon holds the imported session
+    and signs requests) or `local-cli` (the vendor's own CLI runs on its own sign-in). Leaving
+    it out keeps the existing `gateway` behavior.
+    """
+
     vendor: Literal["claude", "chatgpt", "copilot"]
     plan: str
     import_: str = Field(alias="import")
+    runtime: SubscriptionRuntime = "gateway"
+
+    @model_validator(mode="after")
+    def runtime_matches_vendor(self) -> Subscription:
+        if self.runtime == "local-cli" and self.vendor not in LOCAL_CLI_VENDORS:
+            raise ValueError(f"runtime local-cli has no CLI contract for vendor {self.vendor}")
+        return self
 
 
 class Provider(ConfigModel):
@@ -55,6 +74,12 @@ class Provider(ConfigModel):
     enabled: bool = True
     keys: list[ProviderKey] = []
     subscription: Subscription | None = None
+
+    @model_validator(mode="after")
+    def runtime_belongs_to_subscription(self) -> Provider:
+        if "runtime" in (self.model_extra or {}):
+            raise ValueError("runtime belongs under subscription, not on the provider")
+        return self
 
     @model_validator(mode="after")
     def has_auth_or_builtin_kind(self) -> Provider:

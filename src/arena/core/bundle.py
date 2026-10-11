@@ -27,6 +27,13 @@ from arena.stats.pareto import ParetoPoint, pareto_frontier
 from arena.stats.ratings import bradley_terry
 from arena.stats.rundiff import diff_runs
 from arena.stats.series import chart_series
+from arena.stats.serving import (
+    SERVING_LABELS,
+    ServingMode,
+    contestant_serving,
+    is_subscription_backed,
+    trial_serving,
+)
 from arena.stats.sessions import summarize_sessions
 
 _RUN_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,127}\Z")
@@ -438,6 +445,13 @@ def compute_stats(
         tokens[contestant.id] = sum(
             call.tokens.in_ + call.tokens.out for call in owner_calls
         ) / max(1, len(owner_trials))
+    serving: dict[str, ServingMode] = {
+        contestant.id: contestant_serving(
+            trial_serving(trial, calls_by_trial[trial.id])
+            for trial in trial_by_contestant[contestant.id]
+        )
+        for contestant in records.contestants
+    }
     leaderboard = []
     top_id = max(
         (key for key, value in aggregation.contestants.items() if value.suite is not None),
@@ -475,6 +489,11 @@ def compute_stats(
                 if costs[contestant.id] is not None
                 else None,
                 "tokens_per_task": tokens[contestant.id],
+                "serving": serving[contestant.id],
+                "serving_label": SERVING_LABELS[serving[contestant.id]],
+                "cost_label": "flat"
+                if is_subscription_backed(serving[contestant.id])
+                else "priced",
             }
         )
     leaderboard.sort(
@@ -491,11 +510,13 @@ def compute_stats(
             and aggregation.contestants[contestant.id].suite
             else 0,
             tokens[contestant.id],
-            costs[contestant.id]
+            None
+            if is_subscription_backed(serving[contestant.id])
+            else costs[contestant.id]
             / max(1, len({t.task_id for t in trial_by_contestant[contestant.id]}))
             if costs[contestant.id] is not None
             else None,
-            any(t.flags.subscription_served for t in trial_by_contestant[contestant.id]),
+            is_subscription_backed(serving[contestant.id]),
         )
         for contestant in records.contestants
     ]
@@ -613,6 +634,7 @@ def compute_stats(
         "pareto": {
             "cost_axis": pareto.cost_axis,
             "frontier": [point.contestant_id for point in pareto.frontier],
+            "note": _pareto_note(pareto.cost_axis, serving),
         },
         "ratings": ratings,
         "kit_effects": kit_effects,
@@ -626,6 +648,17 @@ def compute_stats(
         "price_versions": summary["price_versions"],
         "run_diff": {"contestants": run_diff} if run_diff is not None else None,
     }
+
+
+def _pareto_note(cost_axis: str, serving: dict[str, ServingMode]) -> str | None:
+    """Explain why the cost axis is tokens when subscription results are present."""
+    flat = sum(is_subscription_backed(mode) for mode in serving.values())
+    if cost_axis != "tokens_per_task" or not flat:
+        return None
+    return (
+        f"Cost axis is tokens per task: {flat} of {len(serving)} contestants are served on a "
+        "subscription at a flat fee, so dollars would not be comparable."
+    )
 
 
 def _kit_pairs(records: RunRecords) -> list[tuple[Contestant, Contestant]]:
@@ -722,8 +755,8 @@ def render_report(records: RunRecords, stats: dict[str, Any]) -> str:
         "",
         "## Leaderboard",
         "",
-        "| Rank | Contestant | Score | 95% CI | Cost / task | Tokens / task |",
-        "| ---: | --- | ---: | ---: | ---: | ---: |",
+        "| Rank | Contestant | Served by | Score | 95% CI | Cost / task | Tokens / task |",
+        "| ---: | --- | --- | ---: | ---: | ---: | ---: |",
     ]
     excluded: list[str] = []
     for rank, row in enumerate(stats["leaderboard"], 1):
@@ -739,14 +772,29 @@ def render_report(records: RunRecords, stats: dict[str, Any]) -> str:
             )
         ci = f"[{suite['low']:.3f}, {suite['high']:.3f}]" if suite else "—"
         score = f"{suite['estimate']:.3f}" if suite else "—"
-        cost = (
-            f"${row['cost_usd_per_task']:.4f}"
-            if row["cost_usd_per_task"] is not None
-            else "unknown / flat"
-        )
+        if row["cost_label"] == "flat":
+            cost = "flat"
+        elif row["cost_usd_per_task"] is not None:
+            cost = f"${row['cost_usd_per_task']:.4f}"
+        else:
+            cost = "unknown"
         lines.append(
-            f"| {rank} | {label} | {score} | {ci} | {cost} | {row['tokens_per_task']:.0f} |"
+            f"| {rank} | {label} | {row['serving_label']} | {score} | {ci} | {cost} | "
+            f"{row['tokens_per_task']:.0f} |"
         )
+    modes = sorted({row["serving"] for row in stats["leaderboard"]})
+    if len(modes) > 1:
+        lines.extend(
+            [
+                "",
+                "Contestants are served differently ("
+                + ", ".join(SERVING_LABELS[mode] for mode in modes)
+                + "). Subscription results carry a flat fee, not a price, so compare their "
+                "cost by tokens per task.",
+            ]
+        )
+    if stats["pareto"]["note"]:
+        lines.extend(["", stats["pareto"]["note"]])
     if excluded:
         lines.extend(["", "## Excluded from headline numbers", "", *excluded])
     lines.extend(

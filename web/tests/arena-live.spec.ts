@@ -28,3 +28,13 @@ test('casts 20 blind votes against the real server, then identities and the lead
   const lines = readFileSync(path.join(home!, 'votes.jsonl'), 'utf8').trim().split('\n');
   expect(lines).toHaveLength(20);
 });
+
+test('Ops reads seeded ledger calls and arena-counted subscription usage from arena serve', async ({ page }) => {
+  await page.goto('/ops');
+  await expect(page.getByRole('heading', { name: 'Calls ledger' })).toBeVisible();
+  await expect(page.getByRole('row', { name: /anthropic-max.*claude-opus-5-5.*200/ })).toBeVisible();
+  await expect(page.getByRole('row', { name: /openai.*gpt-6.*200/ })).toBeVisible();
+  await expect(page.getByText(/lanes: unavailable/)).toBeVisible();
+  await expect(page.getByText(/arena-counted/).first()).toBeVisible();
+  await expect(page.getByText('0123abcd').first()).toBeVisible();
+});

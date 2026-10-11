@@ -24,7 +24,8 @@ export default defineConfig({
   projects: [{ name: 'chromium', use: { ...devices['Desktop Chrome'] } }],
   webServer: {
     command:
-      `pnpm build && cd ${repo} && uv run python -I tests/server/seed_vote_home.py ${home} 20 && ` +
+      `pnpm build && cd ${repo} && uv run python -I tests/server/seed_ops_home.py ${home} && ` +
+      `uv run python -I tests/server/seed_vote_home.py ${home} 20 && ` +
       `uv run arena serve --home ${home} --port ${port} --artifact-port ${port + 1}`,
     url: `http://127.0.0.1:${port}/api/health`,
     reuseExistingServer: false,

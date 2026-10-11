@@ -1,0 +1,15 @@
+{
+ "_note": "field names and value types only; no values",
+ "shape": {
+  "auth_mode": "str",
+  "OPENAI_API_KEY": "NoneType",
+  "tokens": {
+   "id_token": "str",
+   "access_token": "str",
+   "refresh_token": "str",
+   "account_id": "str"
+  },
+  "last_refresh": "str"
+ },
+ "auth_mode_value": "chatgpt"
+}
