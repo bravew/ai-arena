@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 from pathlib import Path
 from typing import Literal
 
@@ -23,9 +24,9 @@ class CatalogModel(BaseModel):
         if (self.pricing == "subscription") == (self.price_per_mtok is not None):
             raise ValueError("set either price_per_mtok or pricing: subscription")
         if self.price_per_mtok is not None and any(
-            price < 0 for price in self.price_per_mtok.values()
+            not math.isfinite(price) or price < 0 for price in self.price_per_mtok.values()
         ):
-            raise ValueError("prices must be non-negative")
+            raise ValueError("prices must be finite and non-negative")
         ModelRef.parse(self.ref)
         return self
 
