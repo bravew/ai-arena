@@ -75,19 +75,23 @@ class _SandboxScorer:
         command: Sequence[str],
         timeout_s: float = DEFAULT_TIMEOUT_S,
         version: str = VERSION,
+        base_files: Mapping[str, bytes] | None = None,
     ) -> None:
         self.id = scorer_id
         self.version = version
         self.sandbox_factory = sandbox_factory
         self.command = tuple(command)
         self.timeout_s = timeout_s
+        # Files staged under the contestant's artifacts, which replace them where paths match.
+        self.base_files = {_safe_path(path): data for path, data in (base_files or {}).items()}
 
     def _run(
         self, context: ScorerContext, task_files: Mapping[str, bytes] | None = None
     ) -> tuple[CommandResult, list[str]]:
         """Return the command result and the contestant paths the task's files replaced."""
         task_files = task_files or {}
-        files = {_safe_path(path): context.read(path) for path in sorted(context.artifacts)}
+        files = dict(self.base_files)
+        files.update({_safe_path(path): context.read(path) for path in sorted(context.artifacts)})
         overwritten = sorted(set(files) & set(task_files))
         files.update(task_files)  # task files win, so a contestant cannot edit its own tests
         try:
@@ -132,6 +136,54 @@ class ExitCodeScorer(_SandboxScorer):
         else:
             rationale = f"exit code {result.exit_code}"
         evidence: dict[str, Any] = {"exit_code": result.exit_code, "timed_out": result.timed_out}
+        if not passed:
+            evidence["output_tail"] = _tail(result.stderr + result.stdout)
+        return self._score(context, float(passed), float(passed), passed, rationale, evidence)
+
+
+class ExecutionScorer(_SandboxScorer):
+    """Run a task's own test command over the trial's artifacts: pass when it exits 0.
+
+    ``base_files`` are the task's fixtures and sit under the contestant's files; ``task_files``
+    are its tests and win over them, so a contestant cannot edit the tests it is scored by.
+    """
+
+    def __init__(
+        self,
+        sandbox_factory: SandboxFactory,
+        *,
+        command: Sequence[str],
+        task_files: Mapping[str, bytes],
+        base_files: Mapping[str, bytes] | None = None,
+        timeout_s: float = DEFAULT_TIMEOUT_S,
+        scorer_id: str = "execution",
+        version: str = VERSION,
+    ) -> None:
+        if not task_files:
+            raise ScorerError(f"{scorer_id}: the task has no test files")
+        super().__init__(
+            scorer_id,
+            sandbox_factory,
+            command=command,
+            timeout_s=timeout_s,
+            version=version,
+            base_files=base_files,
+        )
+        self.task_files = {_safe_path(path): data for path, data in task_files.items()}
+
+    def score(self, context: ScorerContext) -> Score:
+        result, overwritten = self._run(context, self.task_files)
+        passed = not result.timed_out and result.exit_code == 0
+        rationale = (
+            f"timed out after {self.timeout_s:g}s"
+            if result.timed_out
+            else f"exit {result.exit_code}"
+        )
+        evidence: dict[str, Any] = {
+            "exit_code": result.exit_code,
+            "timed_out": result.timed_out,
+            "overwritten_paths": overwritten,
+        }
         if not passed:
             evidence["output_tail"] = _tail(result.stderr + result.stdout)
         return self._score(context, float(passed), float(passed), passed, rationale, evidence)

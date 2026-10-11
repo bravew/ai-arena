@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Sequence
 from pathlib import Path
 from typing import Annotated, Any, cast
 
@@ -11,10 +12,11 @@ import yaml
 
 from arena.catalog.config import CatalogModel, load_catalog
 from arena.cli import app
+from arena.cli_score import StoreArtifactIndex, save_score
 from arena.core.cas import ArtifactStore
 from arena.core.ids import content_id
 from arena.core.modelref import ModelRef
-from arena.core.models import Contestant, Task
+from arena.core.models import Contestant, Score, Task
 from arena.core.store import Store
 from arena.gateway.auth import token_for_trial
 from arena.kits.matrix import expand_matrix
@@ -22,7 +24,12 @@ from arena.providers.config import load_providers, parse_yaml
 from arena.runners.agent_trial import adapter_for, execute_agent_trial
 from arena.runners.completion import CompletionResult, mock_completion
 from arena.runners.metered_gateway import GatewayContainer, GatewayRuntimeError, RunGateway
+from arena.runners.run_record import RunRecorder, contestant_snapshot
 from arena.runners.scheduler import TrialJob, expand_jobs, run_jobs
+from arena.scorers.base import Scorer, ScorerContext, ScorerError, validate_score
+from arena.scorers.docker_sandbox import docker_sandbox_factory, image_for_command
+from arena.scorers.execution import SandboxFactory
+from arena.scorers.task_scorers import task_scorers
 
 
 def _suite_dir(value: str) -> Path:
@@ -95,6 +102,61 @@ def _estimate_cost(jobs: list[TrialJob], models: dict[str, CatalogModel]) -> flo
     return total
 
 
+def _sandbox_for(command: Sequence[str]) -> SandboxFactory:
+    return docker_sandbox_factory(image_for_command(command))
+
+
+def _store_answer(store: Store, artifacts: ArtifactStore, trial_id: str, text: str) -> None:
+    """Keep a completion's text as the trial's `answer.md`, so it can be scored and shown."""
+    store.execute(
+        "INSERT OR REPLACE INTO trial_artifacts(trial_id, path, sha256, mime, render_hint) "
+        "VALUES (?, 'answer.md', ?, 'text/markdown', 'markdown')",
+        (trial_id, artifacts.put(text.encode("utf-8"))),
+    )
+
+
+async def _score_trial(
+    store: Store,
+    artifacts: ArtifactStore,
+    recorder: RunRecorder,
+    trial_id: str,
+    scorers: Sequence[Scorer],
+) -> None:
+    """Score a trial's stored artifacts and record each result.
+
+    A scorer that cannot run leaves the trial unscored and prints why, since an unknown score
+    must not be written as a result. `arena score` can score it again.
+    """
+    if not scorers:
+        return
+    context = ScorerContext(
+        trial_id=trial_id,
+        artifacts={item.path: item for item in StoreArtifactIndex(store).for_trial(trial_id)},
+        blobs=artifacts,
+    )
+
+    def run_scorers() -> list[Score]:
+        return [validate_score(scorer, context, scorer.score(context)) for scorer in scorers]
+
+    try:
+        results = await asyncio.to_thread(run_scorers)
+    except ScorerError as error:
+        typer.echo(f"warning: trial {trial_id} was not scored: {error}", err=True)
+        return
+    with store.transaction() as connection:
+        for score in results:
+            save_score(connection, score)
+    for score in results:
+        recorder.emit(
+            "score_added",
+            trial_id,
+            scorer_id=score.scorer_id,
+            scorer_version=score.scorer_version,
+            normalized=score.normalized,
+            passed=score.passed,
+        )
+
+
 def _jobs(
     suite: str, contestant_paths: list[str], repeats: int
 ) -> tuple[list[Task], list[Contestant], list[TrialJob]]:
@@ -153,10 +215,17 @@ def run(
     providers: Annotated[Path, typer.Option("--providers")] = Path("providers.yaml"),
     catalog: Annotated[Path, typer.Option("--catalog")] = Path("catalog/models.yaml"),
     home: Annotated[Path | None, typer.Option("--home")] = None,
+    score_execution: Annotated[
+        bool,
+        typer.Option(
+            "--score-execution",
+            help="Also run each task's execution scorer in a Docker sandbox (needs Docker).",
+        ),
+    ] = False,
 ) -> None:
     """Execute deterministic mock or metered agent trials with resumability."""
     try:
-        _, expanded, jobs = _jobs(str(suite), contestants, repeats)
+        tasks, expanded, jobs = _jobs(str(suite), contestants, repeats)
     except (OSError, ValueError, yaml.YAMLError) as error:
         typer.echo(str(error), err=True)
         raise typer.Exit(code=1) from error
@@ -168,7 +237,8 @@ def run(
         raise typer.Exit(code=1) from error
     run_config = {
         "suite": str(suite_dir.resolve()),
-        "contestants": [contestant.id for contestant in expanded],
+        "suite_id": suite_dir.name,
+        "contestants": [contestant_snapshot(contestant) for contestant in expanded],
         "repeats": repeats,
     }
     run_id = resume_id or content_id(run_config)
@@ -269,6 +339,7 @@ def run(
             )
         )
     else:
+        recorder = RunRecorder(run_id)
         try:
             providers_config = load_providers(providers) if non_mock else None
             gateway_container: GatewayContainer | None = None
@@ -296,7 +367,7 @@ def run(
                     providers_path=providers,
                     catalog_path=catalog,
                     database_path=db,
-                    event_root=db.parent / "events",
+                    event_root=db.parent / "runs",
                     subscriptions_root=(home or Path(".arena")) / "subscriptions",
                     budget_usd=remaining_budget,
                     providers=providers_config,
@@ -317,9 +388,9 @@ def run(
                     raise typer.Exit(code=2) from error
             try:
                 with Store(db) as store:
+                    artifact_store = ArtifactStore(db.parent / "artifacts")
                     if gateway_container is not None:
-                        gateway = RunGateway(run_id, store, db.parent / "events")
-                        artifact_store = ArtifactStore(db.parent / "artifacts")
+                        gateway = RunGateway(run_id, store, db.parent / "runs")
 
                         async def execute_with_gateway(job: TrialJob) -> CompletionResult:
                             task_path = task_paths[job.task.id]
@@ -364,23 +435,74 @@ def run(
                         executor = execute_with_gateway
                     else:
                         executor = execute
-                    summary = asyncio.run(
-                        run_jobs(
-                            store,
-                            run_id,
-                            jobs,
-                            executor,
-                            resume=resume_id is not None,
-                            run_config=run_config,
-                            budget_usd=budget_usd,
-                            estimate_cost=estimate,
-                            max_concurrency=max_concurrency,
-                            per_contestant=1 if gateway_container is not None else per_contestant,
-                        )
+
+                    def scorers_for(task: Task) -> tuple[Scorer, ...]:
+                        return task_scorers(
+                            task,
+                            task_paths[task.id].parent if score_execution else None,
+                            _sandbox_for if score_execution else None,
+                        ).scorers
+
+                    async def recorded(job: TrialJob) -> CompletionResult:
+                        trial_id = content_id({"run_id": run_id, "job_id": job.id})
+                        ids = {"contestant_id": job.contestant.id, "task_id": job.task.id}
+                        recorder.emit("trial_started", trial_id, **ids)
+                        try:
+                            result = await executor(job)
+                            if job.contestant.model.provider == "mock":
+                                _store_answer(store, artifact_store, trial_id, result.text)
+                            await _score_trial(
+                                store, artifact_store, recorder, trial_id, scorers_for(job.task)
+                            )
+                        except BaseException:
+                            recorder.emit("trial_finished", trial_id, status="errored", **ids)
+                            raise
+                        recorder.emit("trial_finished", trial_id, status="succeeded", **ids)
+                        return result
+
+                    unapplied = sorted(
+                        {
+                            sid
+                            for task in tasks
+                            for sid in task_scorers(
+                                task,
+                                task_paths[task.id].parent if score_execution else None,
+                                _sandbox_for if score_execution else None,
+                            ).unapplied
+                        }
                     )
+                    if unapplied:
+                        typer.echo(
+                            "note: not applied by `arena run` (need a sandbox or a judge): "
+                            + ", ".join(unapplied)
+                        )
+                    recorder.emit("run_started", suite_id=suite_dir.name)
+                    run_status = "errored"
+                    try:
+                        summary = asyncio.run(
+                            run_jobs(
+                                store,
+                                run_id,
+                                jobs,
+                                recorded,
+                                resume=resume_id is not None,
+                                run_config=run_config,
+                                budget_usd=budget_usd,
+                                estimate_cost=estimate,
+                                max_concurrency=max_concurrency,
+                                per_contestant=(
+                                    1 if gateway_container is not None else per_contestant
+                                ),
+                            )
+                        )
+                        run_status = "succeeded"
+                    finally:
+                        recorder.emit("run_finished", status=run_status)
             finally:
                 if gateway_container is not None:
                     gateway_container.stop()
+                if recorder.pending:
+                    recorder.write(db.parent)
         except (OSError, ValueError, GatewayRuntimeError) as error:
             typer.echo(f"error: agent run failed before completion: {error}", err=True)
             raise typer.Exit(code=2) from error
