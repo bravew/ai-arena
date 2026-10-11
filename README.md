@@ -9,7 +9,8 @@ tasks. The design is in [docs/DEV_PLAN.md](docs/DEV_PLAN.md).
 > test suite and web e2e suite pass. Two things are not done yet:
 >
 > - There is no real provider run. The launch model `anthropic/claude-sonnet-4-5`
->   has no verified price in the catalog, so a metered run refuses to start.
+>   now has a catalog price and the launch dry-run plans 60 trials, but the
+>   run spends up to US$20 and needs a provider key and an explicit go-ahead.
 >   [#62](https://github.com/bravew/ai-arena/issues/62) tracks it.
 > - `rubric-judge` scoring has only been run against a fake judge. It needs a
 >   priced judge model behind a gateway, the same blocker as #62.
@@ -175,8 +176,9 @@ your real agent configuration.
 
 ## Known gaps
 
-- **No real launch run.** Needs a verified catalog price for the launch model
-  and provider credentials ([#62](https://github.com/bravew/ai-arena/issues/62)).
+- **No real launch run.** The launch model has a catalog price. The run still
+  needs a provider key and an explicit go-ahead to spend up to US$20
+  ([#62](https://github.com/bravew/ai-arena/issues/62)).
   [docs/launch-report.md](docs/launch-report.md) is the readiness report; it
   predates the metered agent path and still says `arena run` has no gateway
   dispatcher.
