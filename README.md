@@ -5,7 +5,7 @@ contestants (models, agent CLIs, orchestration strategies, skill kits) and
 compares them on quality, cost and time. It is built for coding and content
 tasks. The design is in [docs/DEV_PLAN.md](docs/DEV_PLAN.md).
 
-> **Status.** Every checkpoint (CP1 to CP7) is merged into `main`, and the
+> **Status.** Every checkpoint (CP1 to CP8) is merged into `main`, and the
 > test suite and web e2e suite pass. Two things are not done yet:
 >
 > - There is no real provider run. The launch model `anthropic/claude-sonnet-4-5`
