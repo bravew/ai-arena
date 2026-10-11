@@ -14,7 +14,8 @@ from typer.testing import CliRunner
 
 from arena.agents.local.types import SignIn
 from arena.cli import app
-from arena.providers.accounts import AccountStore
+from arena.providers.accounts import AccountStore, account_label
+from arena.runners.account_context import account_key
 from tests.providers.fakes import FIXTURES, write_script
 
 CLAUDE = FIXTURES / "claude"
@@ -165,6 +166,38 @@ def test_sign_in_is_resolved_once_and_the_same_bytes_reach_the_cli(
     assert result.exit_code == 0, result.output
     assert loads == ["claude"]  # resolved once for the whole run, not per trial or per preflight
     assert aliases.seen_credentials.read_bytes() == CREDENTIALS  # the frozen bytes, unchanged
+
+
+def test_the_private_account_key_never_reaches_a_record_or_a_log(
+    aliases: AliasedWorkspace, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The lane/rest key is a full-length hash of the sign-in; it stays in memory.
+
+    Only the 8-character redacted label may appear in the ledger, the events or anything the
+    run prints. A leaked full-length key would be a stable account identifier written to disk.
+    """
+    aliases.sign_in()
+    sign_in = AccountStore(aliases.home / "accounts").load("claude")
+    assert sign_in is not None
+    private = account_key("claude", sign_in)
+    assert len(private) == 64
+
+    result = CliRunner().invoke(app, aliases.args(aliases.a))
+    assert result.exit_code == 0, result.output
+
+    printed = capsys.readouterr()
+    assert private not in result.output
+    assert private not in printed.out
+    assert private not in printed.err
+    assert private not in (aliases.root / "arena.db").read_bytes().decode("utf-8", "replace")
+    events = aliases.root / "runs"
+    for path in events.rglob("*") if events.exists() else []:
+        if path.is_file():
+            assert private not in path.read_text(encoding="utf-8", errors="replace")
+    # The redacted label is what the ledger is allowed to carry.
+    expected = "cli-" + account_label("claude", dict(sign_in.files))
+    labels = aliases.rows("SELECT DISTINCT account_id FROM calls")
+    assert [row["account_id"] for row in labels] == [expected]
 
 
 @pytest.mark.parametrize("first", ["a", "b"])
