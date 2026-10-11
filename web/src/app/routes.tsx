@@ -14,6 +14,7 @@ const navigation = [
   { path: '/kit-effect', label: 'Kit effect' },
   { path: '/live', label: 'Live' },
   { path: '/ops', label: 'Ops' },
+  { path: '/judges', label: 'Judges' },
   { path: '/vote', label: 'Vote' },
 ];
 
@@ -132,6 +133,7 @@ function glyphFor(path: string): string {
     '/kit-effect': '◇',
     '/live': '◉',
     '/ops': '⚙',
+    '/judges': '∑',
     '/vote': '⚖',
   };
   return glyphs[path] ?? '·';

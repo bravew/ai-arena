@@ -15,6 +15,7 @@ import { TraceView } from '../views/trace/TraceView';
 import { RunDiffView } from '../views/rundiff/RunDiffView';
 import { LiveView } from '../views/live/LiveView';
 import { OpsView } from '../views/ops/OpsView';
+import { JudgesView } from '../views/judges/JudgesView';
 import { ArenaView } from '../views/arena/ArenaView';
 import { createHttpArenaSource } from '../views/arena/http-source';
 
@@ -44,6 +45,7 @@ const routeConfig = [
       { path: 'kit-effect', element: <KitEffectPage /> },
       { path: 'live', element: <LiveRoute /> },
       { path: 'ops', element: <OpsView /> },
+      { path: 'judges', element: <JudgesView /> },
       { path: 'vote', element: <ArenaView dataSource={arenaSource} /> },
       { path: '*', element: <PlaceholderPage title="Page not found" /> },
     ],
