@@ -171,7 +171,7 @@ class Budget:
                 return
             del self._reserved[call.id]
             self._metered_spend += final_cost_usd
-            if final_cost_usd > reserved_amount or self._metered_spend >= self.cap_usd:
+            if final_cost_usd > reserved_amount or self._metered_spend > self.cap_usd:
                 self._over_cap = True
                 raise BudgetExceeded(
                     f"actual charge ${final_cost_usd:.6f} exceeded "
