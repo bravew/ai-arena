@@ -26,7 +26,6 @@ jobs:
           ARENA_SMOKE_RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: |
           python scripts/post_summary.py > smoke-summary.md
-          cat smoke-summary.md >> "$GITHUB_STEP_SUMMARY"
       - name: Comment summary on pull request
         if: always()
         env:
