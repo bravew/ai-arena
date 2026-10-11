@@ -26,7 +26,7 @@ The only estimate available is unknown; `catalog/models.yaml` does not contain a
 
 ## Why no real run is recorded
 
-At this branch head, `arena run` in `src/arena/cli_run.py` calls `mock_completion` directly. It does not start or connect to the gateway dispatcher, so the command cannot run the requested provider-backed experiment. The current environment also has no `ANTHROPIC_API_KEY`, `ARENA_GATEWAY_URL` or `ARENA_RUN_KEY`. A dry run verified the 60-job plan only; no calls were made and no run results exist.
+At this branch head, `arena run` in `src/arena/cli_run.py` has no gateway dispatcher. Non-mock runs now fail closed before creating the store; mock runs still use `mock_completion`. It does not start or connect to the gateway, so the command cannot run the requested provider-backed experiment. The current environment also has no `ANTHROPIC_API_KEY`, `ARENA_GATEWAY_URL` or `ARENA_RUN_KEY`. A dry run verified the 60-job plan only; no calls were made and no run results exist.
 
 Before real launch evidence can be collected, the runner needs an approved gateway execution path with per-call cost accounting and the $20 hard cap applied to actual costs. The planned model also needs a catalog price entry for cost estimates. A real run must then save the run bundle and ledger for verification of non-empty views and Live replay.
 
@@ -45,9 +45,10 @@ The report contains 7 disagreements.
 
 ## Verification at this branch head
 
-- `uv run ruff format --check src tests` — passed.
+- `uv run ruff format src tests` — 175 files unchanged.
 - `uv run ruff check src tests` — passed.
 - `uv run pyright` — 0 errors, 0 warnings, 0 informations.
+- `uv run pytest tests/runners/test_scheduler.py -q` — 8 passed, including the non-mock fail-closed regression.
 - `uv run pytest -q` — 667 passed, 3 skipped (opt-in OpenCode Docker contract; two Playwright-dependent Python tests).
 - `uv run python scripts/check_doc_links.py` — passed, 14 pages.
 - Web TypeScript check, ESLint and Vitest — passed; 39 tests.

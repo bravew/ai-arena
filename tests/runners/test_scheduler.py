@@ -157,6 +157,27 @@ def test_estimated_budget_skips_trials_before_dispatch() -> None:
     assert calls == 2
 
 
+def test_cli_run_refuses_non_mock_until_gateway_dispatcher_is_wired(tmp_path: Path) -> None:
+    cli = CliRunner()
+    result = cli.invoke(
+        app,
+        [
+            "run",
+            "suites/skill-ablation",
+            "-c",
+            "contestants/sets/ablation.yaml",
+            "--repeats",
+            "1",
+            "--db",
+            str(tmp_path / "arena.db"),
+        ],
+    )
+
+    assert result.exit_code == 2
+    assert "gateway dispatcher and actual-cost budget are not wired" in result.output
+    assert not (tmp_path / "arena.db").exists()
+
+
 def test_cli_plan_and_run_dry_run(tmp_path: Path) -> None:
     cli = CliRunner()
     plan_result = cli.invoke(

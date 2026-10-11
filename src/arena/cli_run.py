@@ -154,6 +154,21 @@ def run(
         "repeats": repeats,
     }
     run_id = resume_id or content_id(run_config)
+    non_mock = sorted(
+        {
+            contestant.model.provider
+            for contestant in expanded
+            if contestant.model.provider != "mock"
+        }
+    )
+    if non_mock and not dry_run:
+        providers = ", ".join(non_mock)
+        typer.echo(
+            f"error: arena run cannot execute non-mock providers ({providers}); "
+            "the gateway dispatcher and actual-cost budget are not wired into this command",
+            err=True,
+        )
+        raise typer.Exit(code=2)
 
     def estimate(job: TrialJob) -> float | None:
         model = models.get(str(job.contestant.model))
