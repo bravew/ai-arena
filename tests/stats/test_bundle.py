@@ -346,6 +346,10 @@ def test_cli_report_prints_markdown_with_price_version_and_exclusion_footnote(
     assert result.exit_code == 0, result.output
     assert f"price_version: {PRICE_VERSION}" in result.stdout
     assert "| 1 | opencode+kit |" in result.stdout
+    assert "Served by" in result.stdout
+    assert "subscription (gateway)" in result.stdout
+    assert "Cost axis is tokens per task" in result.stdout
+    assert "| 3 | direct† | subscription (gateway) |" in result.stdout
     assert "Excluded from headline numbers" in result.stdout
     assert "direct†" in result.stdout
     assert "† direct: 1 swapped, 1 unmetered, 0 kit_unapplied (2 trials)" in result.stdout
