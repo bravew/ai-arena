@@ -7,7 +7,6 @@ import urllib.request
 from pathlib import Path
 
 from arena.server.app import ArenaHTTPServer, create_server
-from arena.server.vote_routes import register_vote_routes
 from arena.server.votes import HumanVoteService, JsonlVoteStore, Pair
 
 
@@ -52,8 +51,9 @@ def _call(
 class _Running:
     def __init__(self, home: Path, pairs: list[Pair]) -> None:
         self.service = HumanVoteService(pairs, JsonlVoteStore(home / "votes.jsonl"))
-        self.server: ArenaHTTPServer = create_server("127.0.0.1", 0, home)
-        register_vote_routes(self.server, self.service)
+        self.server: ArenaHTTPServer = create_server(
+            "127.0.0.1", 0, home, vote_service=self.service
+        )
         self.base = f"http://127.0.0.1:{self.server.server_address[1]}"
         self.thread = threading.Thread(target=self.server.serve_forever, daemon=True)
 
