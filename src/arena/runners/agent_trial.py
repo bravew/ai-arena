@@ -136,7 +136,7 @@ async def execute_agent_trial(
             (result.flags.model_dump_json(), trial_id),
         )
         if result.kit_install is not None:
-            await gateway.record_kit_install(trial_id, result.kit_install)
+            raise AgentTrialError("kit installs are not recorded for metered agent runs yet")
         if result.transcript is not None:
             content = getattr(result.transcript, "content", None)
             if isinstance(content, str):
