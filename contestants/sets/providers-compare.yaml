@@ -1,0 +1,14 @@
+# API access plus each vendor's own subscription CLI: 3 contestants.
+matrix:
+  model:
+    - anthropic/claude-sonnet-4-5
+    - anthropic-max/claude-opus-5-5-sub
+    - openai-plus/gpt-6.1-sol
+  scaffold:
+    - { id: claude-code, version: 2.4.1 }
+    - none
+exclude:
+  - { model: anthropic/claude-sonnet-4-5, scaffold: none }
+  - { model: anthropic-max/claude-opus-5-5-sub, scaffold: { id: claude-code, version: 2.4.1 } }
+  - { model: openai-plus/gpt-6.1-sol, scaffold: { id: claude-code, version: 2.4.1 } }
+orchestration: single

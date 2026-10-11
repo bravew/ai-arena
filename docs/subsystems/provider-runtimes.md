@@ -85,7 +85,7 @@ A `local-cli` trial has no gateway in its path, so the arena records only what t
 
 ### Running subscription contestants
 
-`arena run` sends a contestant to the vendor CLI when its model's provider has `subscription.runtime: local-cli`. Mock, API-agent and CLI contestants can share one run.
+`arena run` sends a contestant to the vendor CLI when its model's provider has `subscription.runtime: local-cli`. Mock, API-agent and CLI contestants can share one run. In the checked-in configuration, `anthropic-max/claude-opus-5-5-sub` is the Claude subscription model, while the priced Claude API models use the separate `anthropic` provider ID.
 
 1. **Preflight.** [`preflight_local_cli`](../../src/arena/runners/local_cli_trial.py) runs before any trial, also under `--dry-run`, and makes no model request. Each unmet condition is its own line with a code: `provider_disabled`, `scaffold`, `catalog`, `not_installed`, `auth_required`, `incompatible_version`, `unsupported_model` and `sign_in`. Any issue exits with code 2 and nothing is written.
 2. **No scaffold.** The vendor CLI is the agent, so a CLI contestant takes no scaffold, and the model must be a `pricing: subscription` catalog entry.
