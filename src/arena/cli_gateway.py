@@ -15,7 +15,12 @@ import typer
 import uvicorn
 
 from arena.catalog.config import load_catalog
-from arena.cli_providers import check_local_cli_provider, doctor_lines, echo_detect
+from arena.cli_providers import (
+    check_local_cli_provider,
+    doctor_lines,
+    echo_detect,
+    models_command,
+)
 from arena.gateway.bench import benchmark_mock
 from arena.gateway.endpoints import EndpointResolver
 from arena.gateway.litellm_adapter import create_production_app
@@ -165,6 +170,8 @@ def test_providers(
     if failures:
         raise typer.Exit(code=1)
 
+
+providers_app.command("models")(models_command)
 
 _VENDORS: tuple[Vendor, ...] = ("claude", "chatgpt", "copilot")
 
