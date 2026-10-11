@@ -15,6 +15,7 @@ import typer
 import uvicorn
 
 from arena.catalog.config import load_catalog
+from arena.cli_providers import check_local_cli_provider, doctor_lines, echo_detect
 from arena.gateway.bench import benchmark_mock
 from arena.gateway.endpoints import EndpointResolver
 from arena.gateway.litellm_adapter import create_production_app
@@ -86,10 +87,19 @@ def build_gateway_app(
 
 @providers_app.command("detect")
 def detect_provider(
-    url: Annotated[str, typer.Argument(help="Provider base URL to probe.")],
+    url: Annotated[
+        str | None,
+        typer.Argument(help="Provider base URL to probe. Leave out to check the vendor CLIs."),
+    ] = None,
     timeout: Annotated[float, typer.Option("--timeout", min=0.1)] = 3.0,
+    json_output: Annotated[
+        bool, typer.Option("--json", help="Print the CLI check as JSON.")
+    ] = False,
 ) -> None:
-    """Probe a base URL for supported OpenAI-compatible or Anthropic APIs."""
+    """Probe a base URL for supported APIs, or with no URL report the claude and codex CLIs."""
+    if url is None:
+        echo_detect(json_output=json_output)
+        return
     results = _probe_protocols(url, timeout)
     detected = [protocol for protocol, ok in results.items() if ok]
     if detected:
@@ -115,6 +125,12 @@ def test_providers(
     failures = 0
     for provider in providers.providers:
         if not provider.enabled or provider.kind is not None:
+            continue
+        if provider.subscription is not None and provider.subscription.runtime == "local-cli":
+            passed, lines = check_local_cli_provider(provider)
+            for line in lines:
+                typer.echo(line)
+            failures += not passed
             continue
         if provider.subscription is not None:
             typer.echo(
@@ -203,6 +219,8 @@ def create_doctor_command() -> Callable[..., None]:
             typer.echo(
                 f"Arena home: {'writable' if directory.exists() else 'not created'} ({directory})"
             )
+        for line in doctor_lines():
+            typer.echo(line)
         if failures:
             raise typer.Exit(code=1)
 
