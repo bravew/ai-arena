@@ -14,7 +14,8 @@ This reference follows the subsystem design in the development plan. Implementat
 
 1. Gateway decisions write call and usage records.
 2. Runtime events receive monotonically increasing sequence numbers for long-poll consumers.
-3. Session views combine calls with native agent transcripts; optional OTLP export ships spans to a collector.
+3. A `local-cli` trial writes one call per CLI run from the usage the CLI reported, labeled `cli_reported` ([provider runtimes](provider-runtimes.md)).
+4. Session views combine calls with native agent transcripts; optional OTLP export ships spans to a collector.
 
 ## Constraints and failure behavior
 

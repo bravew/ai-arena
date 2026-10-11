@@ -71,6 +71,16 @@ The stream fixtures [`stream.synthetic.jsonl`](../../fixtures/cli-contracts/clau
 6. **Which sign-in a trial uses.** `resolve_sign_in`: the stored copy first, then the CLI's own file if discovery is on, else an error naming the fix.
 7. **Redacted id.** The first 8 hex characters of a SHA-256. For Codex it hashes `tokens.account_id`, so it survives token refresh. For Claude it hashes the sign-in bytes, so it changes when the token does.
 
+### Usage from a local CLI
+
+A `local-cli` trial has no gateway in its path, so the arena records only what the CLI reported. [`UsageCapture`](../../src/arena/runners/usage_capture.py) turns a `LocalCliResult` into records, and [`cli_usage.py`](../../src/arena/obs/cli_usage.py) builds them.
+
+1. **One call per CLI run.** The CLIs report usage for the whole run, not per model turn, so a run is one `calls` row. `cost_usd` is null and the model must be a catalog subscription model, or capture raises.
+2. **Labels without a schema change.** `upstream` is `cli_reported`, `protocol_in` is `local-cli`, `protocol_out` is `cli:claude` or `cli:codex`. The `call_finished` event data adds `source: cli_reported` and `runtime`. The bundle and event schemas are unchanged, and a test validates a row and an event against them.
+3. **Only `call_finished`.** The CLI's usage is known after it exits, so there is no earlier `call_queued` or `call_started` event. The gateway does not emit `call_queued` either.
+4. **Reached.** A trial counts as reached only when the CLI exited cleanly, reported usage, and the served model was verified. A Codex run whose session record was missing is recorded with `model_served` null and is not reached. Every other outcome is recorded as a failed call (429 `subscription_limit`, 401 `auth`, `timeout`, `model_refused` for a model mismatch, `upstream`, `bad_reply`). A spawn failure made no model request and records nothing.
+5. **Budget.** The call is reserved at zero and settled as a subscription call, so its tokens add to `subscription_tokens` and never to the metered spend or the US$20 cap.
+
 ## Constraints and failure behavior
 
 Findings that change the design, each marked as confirmed or still open. These
@@ -91,7 +101,7 @@ Fixtures hold no token, email or home path. Paths are replaced with `<HOME>` and
 ## Verification
 
 ```sh
-uv run pytest tests/providers/test_runtimes.py tests/runners/test_local_cli.py tests/providers/test_accounts.py
+uv run pytest tests/providers/test_runtimes.py tests/runners/test_local_cli.py tests/providers/test_accounts.py tests/runners/test_usage_capture.py
 uv run arena providers detect --json
 uv run python scripts/check_doc_links.py
 grep -rE "eyJ|@" fixtures/cli-contracts || echo "no secrets or identities"
