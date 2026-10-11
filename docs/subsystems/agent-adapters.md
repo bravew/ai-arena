@@ -17,7 +17,7 @@
 ## Runtime path
 
 1. The caller supplies an adapter, task, settings, sandbox box, gateway observer, gateway endpoint, model and trial token.
-2. `AgentRunner.run` reads the installed CLI version, wires gateway URL/token and model, installs an optional kit, and starts the adapter command. Claude Code receives `ANTHROPIC_BASE_URL`, `ANTHROPIC_AUTH_TOKEN` and (for API-key use) `ANTHROPIC_MODEL` as process environment values; subscription mode passes only the gateway URL/token and leaves model selection to its imported session.
+2. `AgentRunner.run` reads the installed CLI version, wires gateway URL/token and model, installs an optional kit, and starts the adapter command. The returned `AgentRunResult.kit_install` retains written paths and refusal reasons. An install with refusals and no written paths sets `TrialFlags.kit_unapplied`; partial and empty installs do not. Claude Code receives `ANTHROPIC_BASE_URL`, `ANTHROPIC_AUTH_TOKEN` and (for API-key use) `ANTHROPIC_MODEL` as process environment values; subscription mode passes only the gateway URL/token and leaves model selection to its imported session.
 3. The runner waits up to `first_step_timeout` for a call bearing the trial token and adapter protocol.
 4. With a reached call, the runner collects gateway calls and any native transcript, and returns `reached` with metered flags.
 5. Without a reached call, the runner calls `check()`. A failed check returns `errored` with `wiring`; a successful check returns `unmetered` for transcript-only reporting.
@@ -31,7 +31,7 @@
 - Pi versions below 0.99.0 fail during `version()` with a reason because native MCP support is required by the adapter's kit target. Malformed Pi JSONL produces a partial session; committed Pi transcript samples are mock fixtures, not vendor-recorded transcripts.
 - Adapter operations receive only the supplied `AgentBox`; adapters must write configuration inside the container and must not access the user's host configuration.
 - Exceptions during version detection, wiring, kit installation, command creation, or transcript handling return `errored` with `error_class="wiring"`.
-- A missing trial-token call is never treated as a task failure. A successful wiring check marks the result unmetered; a failed check marks it errored.
+- A missing trial-token call is never treated as a task failure. A successful wiring check marks the result unmetered; a failed check marks it errored. Both outcomes and errors after installation preserve the kit result and `kit_unapplied` flag; an exception before installation completes leaves the kit result unknown (`None`).
 - Codex provider config contains the gateway URL and the name of the token environment variable. It does not contain the token or a provider credential; subscription state remains on the daemon.
 - Codex kit settings are written before provider and MCP table headers so they remain at the TOML root. Configuration fragments use real newlines and the merged TOML is parsed before replacing `config.toml`; an invalid merge raises a wiring error.
 - Codex `check()` parses the generated TOML and verifies its selected model, provider, Responses protocol and gateway token environment variable. Invalid or incomplete TOML returns a failed wiring check.
@@ -46,5 +46,5 @@
 ## Verification
 
 ```sh
-uv run pytest tests/agents/test_claude_code.py tests/agents/test_codex_cli.py tests/agents/test_pi.py tests/agents/test_contract_harness.py
+uv run pytest tests/agents/test_claude_code.py tests/agents/test_codex_cli.py tests/agents/test_pi.py tests/agents/test_contract_harness.py tests/agents/test_kit_result.py
 ```

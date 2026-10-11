@@ -8,7 +8,7 @@ from dataclasses import dataclass
 from enum import StrEnum
 from typing import Any, Protocol
 
-from arena.agents.base import AgentAdapter, AgentBox, AgentProtocol, GatewayEndpoint
+from arena.agents.base import AgentAdapter, AgentBox, AgentProtocol, GatewayEndpoint, KitInstall
 from arena.core.modelref import ModelRef
 from arena.core.models import Call, Session, Task, TrialFlags
 
@@ -36,6 +36,7 @@ class AgentRunResult:
     sessions: tuple[Session, ...] = ()
     transcript: object | None = None
     detail: str | None = None
+    kit_install: KitInstall | None = None
 
 
 class AgentRunner:
@@ -58,11 +59,16 @@ class AgentRunner:
         kit: Any = None,
     ) -> AgentRunResult:
         version: str | None = None
+        kit_install: KitInstall | None = None
+        flags = TrialFlags()
         try:
             version = adapter.version(box)
             adapter.wire(box, endpoint, model)
             if kit is not None:
-                adapter.install_kit(box, kit)
+                kit_install = adapter.install_kit(box, kit)
+                flags = TrialFlags(
+                    kit_unapplied=bool(kit_install.refused) and not kit_install.written
+                )
             # Start the CLI before waiting for the gateway's first-step observation.
             command = adapter.command(task, settings)
             execution = asyncio.create_task(asyncio.to_thread(box.execute, command))
@@ -77,9 +83,10 @@ class AgentRunner:
                         return AgentRunResult(
                             state=ReachedState.ERRORED,
                             error_class="wiring",
-                            flags=TrialFlags(),
+                            flags=flags,
                             version=version,
                             detail=wiring.detail,
+                            kit_install=kit_install,
                         )
                 calls = await gateway.calls(trial_token)
                 native = adapter.collect(box)
@@ -87,10 +94,11 @@ class AgentRunner:
                 return AgentRunResult(
                     state=ReachedState.REACHED if reached else ReachedState.UNMETERED,
                     error_class=None,
-                    flags=TrialFlags(unmetered=not reached),
+                    flags=flags.model_copy(update={"unmetered": not reached}),
                     version=version,
                     sessions=tuple(sessions),
                     transcript=native,
+                    kit_install=kit_install,
                 )
             finally:
                 if not execution.done():
@@ -99,9 +107,10 @@ class AgentRunner:
             return AgentRunResult(
                 state=ReachedState.ERRORED,
                 error_class="wiring",
-                flags=TrialFlags(),
+                flags=flags,
                 version=version,
                 detail=str(error),
+                kit_install=kit_install,
             )
 
 
