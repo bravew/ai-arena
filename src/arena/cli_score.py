@@ -91,11 +91,11 @@ def score_run(
 
     with store.transaction() as conn:
         for score in results:
-            _save_score(conn, score)
+            save_score(conn, score)
     return results
 
 
-def _save_score(conn: sqlite3.Connection, score: Score) -> None:
+def save_score(conn: sqlite3.Connection, score: Score) -> None:
     evidence_json = json.dumps(score.evidence, sort_keys=True, separators=(",", ":"))
     conn.execute(
         "INSERT INTO scores (trial_id, scorer_id, scorer_version, value, normalized, passed, "

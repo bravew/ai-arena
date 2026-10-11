@@ -11,8 +11,9 @@ tasks. The design is in [docs/DEV_PLAN.md](docs/DEV_PLAN.md).
 > - There is no real provider run. The launch model `anthropic/claude-sonnet-4-5`
 >   has no verified price in the catalog, so a metered run refuses to start.
 >   [#62](https://github.com/bravew/ai-arena/issues/62) tracks it.
-> - `arena run` does not apply the scorers a task defines, so a run has no
->   scores until you score it. See [Known gaps](#known-gaps).
+> - `arena run` scores only the `constraints` scorers a task defines. Its
+>   `execution` and `rubric-judge` scorers are not applied yet. See
+>   [Known gaps](#known-gaps).
 
 ## Architecture
 
@@ -179,12 +180,12 @@ your real agent configuration.
   [docs/launch-report.md](docs/launch-report.md) is the readiness report; it
   predates the metered agent path and still says `arena run` has no gateway
   dispatcher.
-- **`arena run` does not score.** It stores each completion as the trial's
-  `answer.md`, a contestant snapshot and `runs/<run id>/events.jsonl`, so
-  `report`, `export` and `serve` read the run. The scorers a task YAML lists
-  (`execution`, `constraints`) are not run by `run`, and `arena score` only
-  knows the visual scorer, so leaderboard scores stay empty.
-  [#166](https://github.com/bravew/ai-arena/issues/166) tracks it.
+- **`arena run` applies only `constraints` scorers**, to the mock completion's
+  `answer.md`. The `execution` scorer needs a sandbox with the task's files and
+  `rubric-judge` needs a judge model, so `run` prints which ones it skipped.
+  A leaderboard score is therefore the mean over the scored trials only, not
+  over the whole suite, and agent trials are not scored by `run` yet.
+  [#168](https://github.com/bravew/ai-arena/issues/168) tracks it.
 - **A resumed run** appends a second `run_started` and `run_finished` pair to
   the run's events.
 - **Kits and native sessions** are not resolved or persisted by `arena run`.

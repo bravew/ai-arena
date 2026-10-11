@@ -11,6 +11,7 @@ import yaml
 
 from arena.catalog.config import CatalogModel, load_catalog
 from arena.cli import app
+from arena.cli_score import StoreArtifactIndex, save_score
 from arena.core.cas import ArtifactStore
 from arena.core.ids import content_id
 from arena.core.modelref import ModelRef
@@ -24,6 +25,8 @@ from arena.runners.completion import CompletionResult, mock_completion
 from arena.runners.metered_gateway import GatewayContainer, GatewayRuntimeError, RunGateway
 from arena.runners.run_record import RunRecorder, contestant_snapshot
 from arena.runners.scheduler import TrialJob, expand_jobs, run_jobs
+from arena.scorers.base import ScorerContext, validate_score
+from arena.scorers.task_scorers import task_scorers
 
 
 def _suite_dir(value: str) -> Path:
@@ -105,6 +108,34 @@ def _store_answer(store: Store, artifacts: ArtifactStore, trial_id: str, text: s
     )
 
 
+def _score_answer(
+    store: Store, artifacts: ArtifactStore, recorder: RunRecorder, trial_id: str, task: Task
+) -> None:
+    """Apply the task's constraint scorers to the stored answer and record each result."""
+    scorers = task_scorers(task).scorers
+    if not scorers:
+        return
+    index = StoreArtifactIndex(store)
+    context = ScorerContext(
+        trial_id=trial_id,
+        artifacts={item.path: item for item in index.for_trial(trial_id)},
+        blobs=artifacts,
+    )
+    results = [validate_score(scorer, context, scorer.score(context)) for scorer in scorers]
+    with store.transaction() as connection:
+        for score in results:
+            save_score(connection, score)
+    for score in results:
+        recorder.emit(
+            "score_added",
+            trial_id,
+            scorer_id=score.scorer_id,
+            scorer_version=score.scorer_version,
+            normalized=score.normalized,
+            passed=score.passed,
+        )
+
+
 def _jobs(
     suite: str, contestant_paths: list[str], repeats: int
 ) -> tuple[list[Task], list[Contestant], list[TrialJob]]:
@@ -166,7 +197,7 @@ def run(
 ) -> None:
     """Execute deterministic mock or metered agent trials with resumability."""
     try:
-        _, expanded, jobs = _jobs(str(suite), contestants, repeats)
+        tasks, expanded, jobs = _jobs(str(suite), contestants, repeats)
     except (OSError, ValueError, yaml.YAMLError) as error:
         typer.echo(str(error), err=True)
         raise typer.Exit(code=1) from error
@@ -385,12 +416,21 @@ def run(
                             result = await executor(job)
                             if job.contestant.model.provider == "mock":
                                 _store_answer(store, artifact_store, trial_id, result.text)
+                                _score_answer(store, artifact_store, recorder, trial_id, job.task)
                         except BaseException:
                             recorder.emit("trial_finished", trial_id, status="errored", **ids)
                             raise
                         recorder.emit("trial_finished", trial_id, status="succeeded", **ids)
                         return result
 
+                    unapplied = sorted(
+                        {sid for task in tasks for sid in task_scorers(task).unapplied}
+                    )
+                    if unapplied and not non_mock:
+                        typer.echo(
+                            "note: not applied by `arena run` (need a sandbox or a judge): "
+                            + ", ".join(unapplied)
+                        )
                     recorder.emit("run_started", suite_id=suite_dir.name)
                     run_status = "errored"
                     try:
