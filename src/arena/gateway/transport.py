@@ -30,7 +30,7 @@ class HttpTransport:
         body: bytes,
         headers: Mapping[str, str],
     ) -> TransportResponse:
-        client = httpx.AsyncClient(timeout=self.timeout)
+        client = httpx.AsyncClient(timeout=self.timeout, follow_redirects=False)
         try:
             request = client.build_request(
                 "POST",

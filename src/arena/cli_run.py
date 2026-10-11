@@ -24,13 +24,18 @@ from arena.core.models import Contestant, Score, Task
 from arena.core.store import Store
 from arena.gateway.auth import token_for_trial
 from arena.gateway.budget import Budget
-from arena.gateway.rests import RestBook
 from arena.judges.client import HttpJudgeTransport, JudgeTransport, WireProtocol
 from arena.kits.matrix import expand_matrix
 from arena.obs.events import EventLog
 from arena.obs.ledger import CallsLedger
 from arena.providers.accounts import AccountStore
 from arena.providers.config import Provider, load_providers, parse_yaml
+from arena.runners.account_context import (
+    RunScopedRestBook,
+    SignInSnapshot,
+    plan_lanes,
+    snapshot_sign_ins,
+)
 from arena.runners.agent_trial import adapter_for, execute_agent_trial
 from arena.runners.completion import CompletionResult, mock_completion
 from arena.runners.local_cli_trial import (
@@ -39,7 +44,6 @@ from arena.runners.local_cli_trial import (
     execute_local_cli_trial,
     next_cli_seq,
     preflight_local_cli,
-    provider_concurrency,
     read_staged_events,
 )
 from arena.runners.metered_gateway import GatewayContainer, GatewayRuntimeError, RunGateway
@@ -321,7 +325,19 @@ def run(
     ]
     cli_jobs = [job for job in jobs if job.contestant.model.provider in cli_providers]
     accounts = AccountStore((home or Path.home() / ".arena") / "accounts")
+    sign_ins = SignInSnapshot.empty()
+    lanes: dict[str, tuple[str, int]] = {}
     if cli_jobs:
+        # Resolve each vendor's sign-in once, before scheduling. Every trial on that vendor copies
+        # these same bytes, and the lanes and rests are keyed off them, so a token refresh cannot
+        # split a run across two accounts. Aliases of one account share a lane at the lowest
+        # configured concurrency.
+        vendors = {
+            provider.subscription.vendor
+            for provider in cli_providers.values()
+            if provider.subscription is not None
+        }
+        sign_ins = snapshot_sign_ins(vendors, accounts, os.environ)
         issues = [
             issue
             for contestant in {job.contestant.id: job.contestant for job in cli_jobs}.values()
@@ -329,7 +345,7 @@ def run(
                 contestant,
                 cli_providers[contestant.model.provider],
                 models,
-                accounts,
+                sign_ins,
                 os.environ,
             )
         ]
@@ -337,6 +353,8 @@ def run(
             for issue in issues:
                 typer.echo(f"error: {issue.contestant}: {issue.message} [{issue.code}]", err=True)
             raise typer.Exit(code=2)
+        # Only a complete snapshot can be keyed; a missing sign-in already exited above.
+        lanes = plan_lanes(list(cli_providers.values()), sign_ins)
         typer.echo(
             "note: subscription trials use your plan's quota under the vendor's terms; "
             "the arena charges no price for them"
@@ -556,9 +574,9 @@ def run(
                                 catalog_data,
                                 lambda: next(sequence),
                             ),
-                            accounts=accounts,
+                            sign_ins=sign_ins,
                             environ=os.environ,
-                            rests=RestBook(),
+                            rests=RunScopedRestBook(),
                         )
                         dispatch_api = executor
 
@@ -573,10 +591,9 @@ def run(
                         executor = execute_routed
 
                     def lane(job: TrialJob) -> tuple[str, int] | None:
-                        provider = cli_providers.get(job.contestant.model.provider)
-                        if provider is None:
-                            return None
-                        return provider.id, provider_concurrency(provider)
+                        # A pure lookup: the lanes were normalized before scheduling, so the limit
+                        # does not depend on which alias the scheduler reaches first.
+                        return lanes.get(job.contestant.model.provider)
 
                     def built(task: Task) -> TaskScorers:
                         return task_scorers(

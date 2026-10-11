@@ -7,6 +7,8 @@ import urllib.request
 from pathlib import Path
 from typing import Any
 
+import pytest
+
 from arena.agents.local import ClaudeLocalAdapter, SignIn
 from arena.core.store import Store
 from arena.providers.accounts import AccountStore
@@ -206,6 +208,80 @@ def test_connection_test_is_rate_limited_and_does_not_repeat_request(
     assert first[0] == 200
     assert second[0] == 429
     assert len(calls) == 1
+
+
+def test_connection_test_rejects_plaintext_endpoint_before_request(
+    tmp_path: Path, monkeypatch: Any
+) -> None:
+    import arena.server.providers_api as provider_api
+
+    providers, catalog = setup(tmp_path)
+    raw = providers.read_text(encoding="utf-8").replace(
+        "https://api.anthropic.com", "http://api.anthropic.com"
+    )
+    providers.write_text(raw, encoding="utf-8")
+    monkeypatch.setenv("API_KEY", "DO-NOT-SEND-THIS")
+    requests: list[tuple[Any, ...]] = []
+    monkeypatch.setattr(
+        provider_api.httpx,
+        "post",
+        lambda *args, **kwargs: requests.append((args, kwargs)),
+    )
+
+    with Running(tmp_path, providers, catalog) as running:
+        status, body = request(
+            f"{running.base}/api/providers/missing-api/test", method="POST", body=b"{}"
+        )
+
+    assert status == 422
+    assert body["ok"] is False
+    assert "HTTPS" in body["error"]
+    assert "DO-NOT-SEND-THIS" not in json.dumps(body)
+    assert requests == []
+
+
+def test_api_request_rejects_insecure_or_malformed_urls_without_transport(
+    monkeypatch: Any,
+) -> None:
+    import arena.server.providers_api as provider_api
+
+    requests: list[tuple[Any, ...]] = []
+    monkeypatch.setattr(
+        provider_api.httpx,
+        "post",
+        lambda *args, **kwargs: requests.append((args, kwargs)),
+    )
+    for endpoint in (
+        "http://api.example.test/v1",
+        "ftp://api.example.test/v1",
+        "https://user:password@api.example.test/v1",
+        "https://api.example.test:bad/v1",
+        "/v1",
+    ):
+        with pytest.raises(ValueError, match="absolute HTTPS URL"):
+            provider_api._test_api_request("anthropic", endpoint, "sentinel")
+    assert requests == []
+
+
+def test_api_request_does_not_follow_https_redirects(monkeypatch: Any) -> None:
+    import arena.server.providers_api as provider_api
+
+    class Response:
+        status_code = 302
+
+    calls: list[tuple[Any, ...]] = []
+
+    def post(*args: Any, **kwargs: Any) -> Response:
+        calls.append((args, kwargs))
+        return Response()
+
+    monkeypatch.setattr(provider_api.httpx, "post", post)
+    assert (
+        provider_api._test_api_request("anthropic", "https://api.example.test/v1", "sentinel")
+        == 302
+    )
+    assert len(calls) == 1
+    assert calls[0][1]["follow_redirects"] is False
 
 
 def test_provider_test_rejects_disabled_and_unknown_ids(tmp_path: Path) -> None:

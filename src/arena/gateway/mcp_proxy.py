@@ -28,6 +28,7 @@ from typing import Any, Protocol, cast
 from urllib.parse import urlsplit
 
 from arena.core.models import McpServer
+from arena.core.net import no_redirect_opener
 
 _ENV_REFERENCE = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*)\}")
 # What the container may choose. Everything else, including its Authorization header (the trial
@@ -322,7 +323,7 @@ class UrllibUpstream:
             raise McpConfigError(f"unsupported MCP method {method!r}")
         self._check_destination(url)
         request = urllib.request.Request(url, data=body, headers=headers, method=method)
-        opener = urllib.request.build_opener(_NoRedirect)
+        opener = no_redirect_opener()
         try:
             with opener.open(request, timeout=self._timeout) as response:
                 return response.status, dict(response.headers.items()), _bounded_read(response)
@@ -356,10 +357,3 @@ def _bounded_read(response: Any) -> bytes:
     if len(data) > _MAX_REPLY:
         raise McpReplyTooLarge(f"MCP reply exceeded {_MAX_REPLY} bytes")
     return data
-
-
-class _NoRedirect(urllib.request.HTTPRedirectHandler):
-    """A redirect would carry the daemon's auth header to another host; return it as a reply."""
-
-    def redirect_request(self, *args: Any, **kwargs: Any) -> None:  # type: ignore[override]
-        return None

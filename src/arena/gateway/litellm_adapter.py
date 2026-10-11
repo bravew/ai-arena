@@ -19,7 +19,7 @@ from typing import Any, cast
 from starlette.applications import Starlette
 
 from arena.core.models import Tokens
-from arena.gateway.endpoints import EndpointResolver, ProviderEndpointError
+from arena.gateway.endpoints import EndpointResolver, ProviderEndpoint, ProviderEndpointError
 from arena.gateway.server import DispatchContext, UpstreamResponse, create_app
 from arena.gateway.translate import TranslationError
 from arena.gateway.transport import HttpTransport, TransportResponse
@@ -175,6 +175,8 @@ async def _bytes(value: bytes) -> AsyncIterator[bytes]:
 _LITELLM_PROVIDERS = {"anthropic": "anthropic", "chat": "openai"}
 
 Completion = Callable[..., Awaitable[Any]]
+# Per-call timeout for a real LiteLLM request, matching the native transport.
+_LITELLM_TIMEOUT = 600.0
 
 
 def litellm_translator(
@@ -210,6 +212,10 @@ class LiteLLMAdapter:
     One attempt, no LiteLLM retries, no model fallback: a failure surfaces as the provider's
     status. Streaming replies are re-emitted as chat SSE; their token counts are not known when
     the response starts, so streamed calls report no tokens.
+
+    The adapter passes LiteLLM a client built with `follow_redirects=False`, so a
+    credential-bearing call reaches the configured HTTPS host and nothing else. LiteLLM's own
+    client would otherwise follow a redirect and resend the key to a second host.
     """
 
     def __init__(
@@ -220,6 +226,10 @@ class LiteLLMAdapter:
     ) -> None:
         self.endpoint_resolver = endpoint_resolver or EndpointResolver()
         self._completion = completion
+        # One no-redirect client per (protocol, base URL, key id, resolved key), so a client
+        # carrying one provider's credential is never reused for another provider. Real calls
+        # only. The tuple holds a secret but is only an in-memory dict key, never logged.
+        self._clients: dict[tuple[str, str, str, str], Any] = {}
 
     async def dispatch(self, context: DispatchContext) -> UpstreamResponse:
         if context.source_protocol != "chat":
@@ -246,7 +256,25 @@ class LiteLLMAdapter:
         )
         if context.streaming:
             arguments["stream_options"] = {"include_usage": True}
-        completion = self._completion or _litellm_completion()
+        # A real LiteLLM call gets a client that refuses redirects, so the credential only
+        # reaches the configured host. The client is keyed on the endpoint and the resolved
+        # credential, so it never carries one provider's key into another's call. The tuple
+        # holds a secret but is only ever an in-memory dict key; it is never logged.
+        if self._completion is None:
+            completion = _litellm_completion()
+            cache_key = (
+                context.target_protocol,
+                endpoint.base_url,
+                endpoint.key_id,
+                endpoint.api_key,
+            )
+            client = self._clients.get(cache_key)
+            if client is None:
+                client = _litellm_no_redirect_client(context.target_protocol, endpoint)
+                self._clients[cache_key] = client
+            arguments["client"] = client
+        else:
+            completion = self._completion
         try:
             result = await completion(**arguments)
         except Exception as error:
@@ -284,6 +312,29 @@ def _litellm_completion() -> Completion:
     module: Any = import_module("litellm")
     module.telemetry = False
     return cast(Completion, module.acompletion)
+
+
+def _litellm_no_redirect_client(protocol: str, endpoint: ProviderEndpoint) -> Any:
+    """Build the LiteLLM client for one call with redirects disabled.
+
+    LiteLLM's own clients follow redirects, which would resend the provider credential to
+    whatever host a 3xx points at. Anthropic's LiteLLM path requires LiteLLM's own handler
+    type, while the OpenAI path requires an OpenAI SDK client; each is created here with
+    `follow_redirects=False` (the OpenAI SDK otherwise forces it on).
+    """
+    if protocol == "anthropic":
+        handler_module: Any = import_module("litellm.llms.custom_httpx.http_handler")
+        return handler_module.AsyncHTTPHandler(timeout=_LITELLM_TIMEOUT, follow_redirects=False)
+    import httpx
+    import openai
+
+    http_client = httpx.AsyncClient(timeout=_LITELLM_TIMEOUT, follow_redirects=False)
+    return openai.AsyncOpenAI(
+        api_key=endpoint.api_key or "unused",
+        base_url=endpoint.base_url,
+        http_client=http_client,
+        max_retries=0,
+    )
 
 
 async def _chat_sse(stream: Any) -> AsyncIterator[bytes]:

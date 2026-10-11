@@ -23,7 +23,7 @@ from arena.obs.events import EventLog
 from arena.obs.ledger import CallsLedger
 from arena.providers.accounts import AccountStore, account_label, resolve_sign_in
 from arena.providers.accounts.discovery import discovery_enabled, read_existing
-from arena.providers.config import Provider, load_providers
+from arena.providers.config import Provider, load_providers, validate_credential_endpoint
 from arena.providers.runtimes import (
     AuthState,
     RuntimeReport,
@@ -331,17 +331,23 @@ def _test_api(provider: Provider, environ: Mapping[str, str]) -> dict[str, Any]:
     try:
         status = _test_api_request(protocol, endpoint, secret)
     except (OSError, ValueError, httpx.HTTPError) as error:
-        return {"ok": False, "status": "connection_error", "message": type(error).__name__}
+        message = str(error) if isinstance(error, ValueError) else type(error).__name__
+        return {"ok": False, "status": "connection_error", "message": message}
     return {
-        "ok": status < 400,
-        "status": "ok" if status < 400 else "http_error",
+        "ok": 200 <= status < 300,
+        "status": "ok" if 200 <= status < 300 else "http_error",
         "message": f"One capped request returned HTTP {status}.",
         "http_status": status,
     }
 
 
 def _test_api_request(protocol: str, endpoint: str, secret: str) -> int:
-    base = endpoint.rstrip("/")
+    try:
+        base = validate_credential_endpoint(endpoint).rstrip("/")
+    except ValueError as error:
+        raise ValueError(
+            "provider endpoint must be an absolute HTTPS URL without userinfo"
+        ) from error
     headers = {"Authorization": f"Bearer {secret}"}
     if protocol == "anthropic":
         headers = {"x-api-key": secret, "anthropic-version": "2023-06-01"}
@@ -354,6 +360,7 @@ def _test_api_request(protocol: str, endpoint: str, secret: str) -> int:
                 "messages": [{"role": "user", "content": "ping"}],
             },
             timeout=10,
+            follow_redirects=False,
         )
     elif protocol == "chat":
         response = httpx.post(
@@ -365,6 +372,7 @@ def _test_api_request(protocol: str, endpoint: str, secret: str) -> int:
                 "messages": [{"role": "user", "content": "ping"}],
             },
             timeout=10,
+            follow_redirects=False,
         )
     elif protocol == "responses":
         response = httpx.post(
@@ -372,6 +380,7 @@ def _test_api_request(protocol: str, endpoint: str, secret: str) -> int:
             headers=headers,
             json={"model": "gpt-4o-mini", "max_output_tokens": 1, "input": "ping"},
             timeout=10,
+            follow_redirects=False,
         )
     else:
         raise ValueError(f"provider test does not support protocol {protocol!r}")

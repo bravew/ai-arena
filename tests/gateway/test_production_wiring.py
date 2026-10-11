@@ -181,6 +181,7 @@ def test_http_transport_closes_response_and_client_after_stream(
 
     class FakeClient:
         def __init__(self, **kwargs: Any) -> None:
+            self.kwargs = kwargs
             self.closed = False
             self.response = FakeStream()
 
@@ -215,6 +216,7 @@ def test_http_transport_closes_response_and_client_after_stream(
     assert chunks == [b"chunk"]
     assert client.response.closed
     assert client.closed
+    assert client.kwargs["follow_redirects"] is False
 
 
 def _chat_context(

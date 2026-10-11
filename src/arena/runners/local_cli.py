@@ -32,7 +32,12 @@ from arena.agents.local import (
     StreamSummary,
     served_model_from_rollout,
 )
-from arena.providers.runtimes import probe_environment
+from arena.providers.runtimes import (
+    RuntimeStatus,
+    detect_version,
+    probe_environment,
+    spec_for_vendor,
+)
 
 TASK_INPUT = "task-input"
 MAX_OUTPUT_FILE_BYTES = 10 * 1024 * 1024
@@ -104,11 +109,32 @@ async def run_local_cli(request: LocalCliRequest) -> LocalCliResult:
         workspace = scratch / "workspace"
         home.mkdir(mode=0o700)
         workspace.mkdir(mode=0o700)
-        _place_files(home, request.sign_in.files)
-        _place_files(workspace / TASK_INPUT, request.task_files)
         env = probe_environment(
             request.environ, request.adapter.home_environment(home, request.model)
         )
+        if request.adapter.runtime == "claude":
+            spec = spec_for_vendor("claude")
+            assert spec is not None
+            report = await asyncio.to_thread(
+                detect_version,
+                spec,
+                env,
+                find=lambda _spec, _env: request.binary,
+            )
+            if report.status is not RuntimeStatus.OK:
+                failure = (
+                    FailureKind.SPAWN
+                    if report.status
+                    in {RuntimeStatus.NOT_INSTALLED, RuntimeStatus.PERMISSION_FAILURE}
+                    else FailureKind.PROTOCOL
+                )
+                return _failed(
+                    started,
+                    failure,
+                    "Claude Code restricted mode requires version 2.1.248 or later",
+                )
+        _place_files(home, request.sign_in.files)
+        _place_files(workspace / TASK_INPUT, request.task_files)
         argv = request.adapter.command(request.binary, request.model, request.prompt, workspace)
         try:
             process = await asyncio.create_subprocess_exec(

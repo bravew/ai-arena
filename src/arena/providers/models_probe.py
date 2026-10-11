@@ -20,7 +20,7 @@ from typing import Any, cast
 import httpx
 
 from arena.catalog.config import load_catalog
-from arena.providers.config import Provider
+from arena.providers.config import Provider, validate_credential_endpoint
 from arena.providers.runtimes import (
     Probe,
     ProtocolFailure,
@@ -103,12 +103,17 @@ def _api_models(
         raise DiscoveryError(f"{provider.id} offers no protocol with a model list")
     if not provider.keys:
         raise DiscoveryError(f"{provider.id} has no key to list models with")
+    try:
+        base = validate_credential_endpoint(apis[protocol]).rstrip("/")
+    except ValueError as error:
+        raise DiscoveryError(
+            "credential-bearing provider endpoints require an absolute HTTPS URL"
+        ) from error
     variable = provider.keys[0].env
     variable = variable[2:-1] if variable.startswith("${") and variable.endswith("}") else variable
     secret = environ.get(variable, "")
     if not secret:
         raise DiscoveryError(f"environment variable {variable} is unset")
-    base = apis[protocol].rstrip("/")
     if protocol == "anthropic":
         url = f"{base}/v1/models"
         headers = {"x-api-key": secret, "anthropic-version": "2023-06-01"}
@@ -120,13 +125,13 @@ def _api_models(
     owned = client is None
     http = client or httpx.Client(timeout=15.0)
     try:
-        response = http.get(url, headers=headers, params=params)
+        response = http.get(url, headers=headers, params=params, follow_redirects=False)
     except httpx.HTTPError as error:
         raise DiscoveryError(f"{provider.id}: {type(error).__name__}") from error
     finally:
         if owned:
             http.close()
-    if response.status_code >= 400:
+    if not 200 <= response.status_code < 300:
         raise DiscoveryError(f"{provider.id}: model list answered HTTP {response.status_code}")
     try:
         body: Any = response.json()

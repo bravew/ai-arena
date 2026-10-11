@@ -194,6 +194,7 @@ uv run pytest tests/scorers/test_constraint.py tests/scorers/test_reference.py
 
 - A rubric change should increment the rubric version. The score identity uses the rubric version, and evidence also records the rubric SHA-256 so an edit made without a version bump stays visible. Registry resolution by `rubric-judge` ID alone is ambiguous when several versions are registered; use the explicit `rubric-judge:<id>@<version>` reference.
 - A malformed, incomplete, duplicate, unknown-criterion or out-of-scale verdict raises `MalformedVerdictError`. Transport and artifact failures also abort scoring. `score_run` writes only after every score succeeds, so a judge failure writes nothing and leaves existing score rows untouched.
+- The judge transport refuses every redirect, because the request carries the run's bearer token. A judge endpoint that answered with a redirect would otherwise receive that token at a host the run never named. The redirect surfaces as a `JudgeTransportError` naming the status ([`no_redirect_opener`](../../src/arena/core/net.py)).
 - Evidence records the judge model ID, the reply model when supplied, and token usage when returned.
 - Not covered: no real provider or gateway call has been exercised. The mock provider (#22) and the gateway integration come later.
 

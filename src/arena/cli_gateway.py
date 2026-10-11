@@ -26,7 +26,7 @@ from arena.gateway.bench import benchmark_mock
 from arena.gateway.endpoints import EndpointResolver
 from arena.gateway.litellm_adapter import create_production_app
 from arena.providers.accounts import AccountError, KeychainError, read_claude_keychain
-from arena.providers.config import Provider, load_providers
+from arena.providers.config import Provider, load_providers, validate_credential_endpoint
 from arena.providers.subscriptions import (
     SubscriptionError,
     SubscriptionStore,
@@ -152,19 +152,25 @@ def test_providers(
             failures += 1
             continue
         for key in provider.keys:
+            protocol, endpoint = next(iter(apis.items()))
+            try:
+                validate_credential_endpoint(endpoint)
+            except ValueError:
+                typer.echo(f"{provider.id}/{key.id}: failed (ValueError)")
+                failures += 1
+                continue
             secret = os.environ.get(_environment_name(key.env))
             if not secret:
                 typer.echo(f"{provider.id}/{key.id}: failed (environment variable is unset)")
                 failures += 1
                 continue
-            protocol, endpoint = next(iter(apis.items()))
             try:
                 status = _test_provider_endpoint(protocol, endpoint, secret, timeout)
             except (httpx.HTTPError, ValueError) as error:
                 typer.echo(f"{provider.id}/{key.id}: failed ({type(error).__name__})")
                 failures += 1
             else:
-                if status < 400:
+                if 200 <= status < 300:
                     typer.echo(f"{provider.id}/{key.id}: ok (HTTP {status})")
                 else:
                     typer.echo(f"{provider.id}/{key.id}: failed (HTTP {status})")
@@ -270,6 +276,7 @@ def gateway_health(url: str, timeout: float) -> bool:
             urljoin(url.rstrip("/") + "/", "arena/health"),
             headers={"Authorization": "Bearer arena-ops"},
             timeout=timeout,
+            follow_redirects=False,
         )
     except httpx.HTTPError:
         return False
@@ -323,6 +330,12 @@ def _environment_name(reference: str) -> str:
 
 
 def _test_provider_endpoint(protocol: str, endpoint: str, secret: str, timeout: float) -> int:
+    try:
+        validate_credential_endpoint(endpoint)
+    except ValueError as error:
+        raise ValueError(
+            "credential-bearing provider endpoints require an absolute HTTPS URL"
+        ) from error
     base = endpoint.rstrip("/")
     headers = {"Authorization": f"Bearer {secret}"}
     if protocol == "anthropic":
@@ -336,6 +349,7 @@ def _test_provider_endpoint(protocol: str, endpoint: str, secret: str, timeout: 
                 "messages": [{"role": "user", "content": "ping"}],
             },
             timeout=timeout,
+            follow_redirects=False,
         )
     elif protocol == "chat":
         response = httpx.post(
@@ -347,6 +361,7 @@ def _test_provider_endpoint(protocol: str, endpoint: str, secret: str, timeout: 
                 "messages": [{"role": "user", "content": "ping"}],
             },
             timeout=timeout,
+            follow_redirects=False,
         )
     elif protocol == "responses":
         response = httpx.post(
@@ -354,6 +369,7 @@ def _test_provider_endpoint(protocol: str, endpoint: str, secret: str, timeout: 
             headers=headers,
             json={"model": "gpt-4o-mini", "max_output_tokens": 1, "input": "ping"},
             timeout=timeout,
+            follow_redirects=False,
         )
     else:
         raise ValueError(f"provider test does not support protocol {protocol!r}")

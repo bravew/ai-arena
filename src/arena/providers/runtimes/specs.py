@@ -28,7 +28,7 @@ class RuntimeSpec:
     vendor: str
     binary: str
     path_variable: str
-    min_version: tuple[int, int]
+    min_version: tuple[int, int, int]
     recorded_version: str
     version_args: tuple[str, ...]
     auth_args: tuple[str, ...]
@@ -77,7 +77,7 @@ CLAUDE = RuntimeSpec(
     vendor="claude",
     binary="claude",
     path_variable="CLAUDE_CODE_PATH",
-    min_version=(2, 1),
+    min_version=(2, 1, 248),
     recorded_version="2.1.296",
     version_args=("--version",),
     auth_args=("auth", "status"),
@@ -91,7 +91,7 @@ CODEX = RuntimeSpec(
     vendor="chatgpt",
     binary="codex",
     path_variable="CODEX_CLI_PATH",
-    min_version=(0, 162),
+    min_version=(0, 162, 0),
     recorded_version="0.162.1",
     version_args=("--version",),
     auth_args=("login", "status"),

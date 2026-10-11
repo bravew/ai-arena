@@ -11,7 +11,7 @@ from typer.testing import CliRunner
 
 from arena.catalog.config import load_catalog
 from arena.cli import app
-from arena.providers.config import Provider, load_providers
+from arena.providers.config import Provider, ProviderKey, load_providers
 from arena.providers.models_probe import (
     DiscoveryError,
     append_subscription_entries,
@@ -150,6 +150,68 @@ def test_an_unset_key_variable_is_named_but_nothing_is_sent() -> None:
 
     with pytest.raises(DiscoveryError, match="OPENAI_API_KEY is unset"):
         discover_models(OPENAI, {}, client=_client(httpx.MockTransport(handler)))
+
+
+@pytest.mark.parametrize(
+    "endpoint",
+    [
+        "http://api.example.test/v1",
+        "/v1",
+        "https://user:password@api.example.test/v1",
+        "https://api.example.test:bad/v1",
+        "https://bad host/v1",
+    ],
+)
+def test_discovery_rejects_endpoint_before_reading_key(endpoint: str) -> None:
+    # Construct without validation to prove the runtime boundary as well as config validation.
+    provider = Provider.model_construct(
+        id="openai",
+        keys=[ProviderKey(id="main", env="OPENAI_API_KEY")],
+        apis={"responses": endpoint},
+    )
+
+    class UnreadableEnvironment(dict[str, str]):
+        def get(self, *_: object) -> str:
+            raise AssertionError("invalid endpoint must be rejected before key lookup")
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        raise AssertionError("invalid endpoint must not reach HTTP")
+
+    with (
+        _client(httpx.MockTransport(handler)) as client,
+        pytest.raises(DiscoveryError, match="absolute HTTPS URL"),
+    ):
+        discover_models(provider, UnreadableEnvironment(), client=client)
+
+
+@pytest.mark.parametrize("protocol", ["responses", "chat", "anthropic"])
+@pytest.mark.parametrize("status", [301, 302, 303, 307, 308])
+def test_discovery_rejects_redirect_even_with_valid_model_body(protocol: str, status: int) -> None:
+    seen: list[httpx.Request] = []
+    provider = Provider.model_validate(
+        {
+            "id": "api",
+            "keys": [{"id": "main", "env": "TEST_KEY"}],
+            "apis": {protocol: "https://api.example.test/v1"},
+        }
+    )
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(request)
+        return httpx.Response(
+            status,
+            headers={"location": "http://redirect.example.test/steal"},
+            json={"data": [{"id": "must-not-be-accepted"}]},
+        )
+
+    # Even an injected client whose default follows redirects must be overridden.
+    with (
+        httpx.Client(transport=httpx.MockTransport(handler), follow_redirects=True) as client,
+        pytest.raises(DiscoveryError, match=f"HTTP {status}"),
+    ):
+        discover_models(provider, {"TEST_KEY": "dummy-key"}, client=client)
+    assert len(seen) == 1
+    assert seen[0].url.host == "api.example.test"
 
 
 def test_a_proposed_api_model_has_no_invented_price(tmp_path: Path) -> None:

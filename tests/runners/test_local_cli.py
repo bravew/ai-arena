@@ -9,6 +9,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import os
+import re
 import shlex
 from pathlib import Path
 
@@ -65,6 +66,7 @@ def _fake(
     script.write_text(
         f"""#!/bin/sh
 PATH=/usr/bin:/bin
+if [ "$1" = "--version" ]; then printf '%s\\n' '2.1.296 (Claude Code)'; exit 0; fi
 {{
   echo "pid=$$"
   echo "argv=$*"
@@ -83,6 +85,25 @@ sleep {sleep}
 {rollout}
 {stream_cat}
 exit {exit_code}
+""",
+        encoding="utf-8",
+    )
+    script.chmod(0o755)
+    return script
+
+
+def _versioned_claude(
+    directory: Path, stream: Path, record: Path, version: str, *, exit_code: int = 0
+) -> Path:
+    """A fake `claude` that answers `--version`, then behaves like `_fake`."""
+    script = directory / "claude"
+    script.write_text(
+        f"""#!/bin/sh
+PATH=/usr/bin:/bin
+if [ "$1" = "--version" ]; then printf '%s\\n' {shlex.quote(version)}; exit {exit_code}; fi
+echo "argv=$*" > {shlex.quote(str(record))}
+echo done > answer.md
+cat {shlex.quote(str(stream))}
 """,
         encoding="utf-8",
     )
@@ -189,8 +210,43 @@ def test_child_gets_scratch_home_allowlisted_env_and_narrow_flags(
     argv = seen["argv"][0]
     assert "--model claude-opus-5-5" in argv
     assert "--allowedTools Read Write Edit Glob Grep" in argv
+    assert "--tools Read,Write,Edit,Glob,Grep" in argv
+    assert "--restricted" in argv
+    assert "--safe-mode" in argv
+    assert "--strict-mcp-config" in argv
+    assert "--permission-prompts none" in argv
+    assert "--disallowedTools mcp__*" in argv
     assert "Bash" not in argv
     assert str(request.environ["HOME"]) not in argv
+
+
+@pytest.mark.parametrize(
+    ("version", "exit_code"),
+    [("2.1.247 (Claude Code)", 0), ("1.0.3 (Claude Code)", 0), ("no version here", 0), ("", 3)],
+)
+def test_a_claude_older_than_the_restricted_mode_floor_fails_before_any_work(
+    dirs: tuple[Path, Path, Path], version: str, exit_code: int
+) -> None:
+    binary_dir, scratch, home = dirs
+    record = binary_dir / "record"
+    claude = _versioned_claude(binary_dir, CLAUDE_STREAM, record, version, exit_code=exit_code)
+    result = asyncio.run(run_local_cli(_request(claude, scratch, home=home)))
+    assert result.failure is FailureKind.PROTOCOL
+    assert "2.1.248" in result.detail
+    # The check runs before the sign-in is staged, so no trial process ever starts.
+    assert not record.exists()
+    assert result.summary is None
+    assert result.outputs == {}
+    assert list(scratch.iterdir()) == []
+
+
+def test_a_supported_claude_version_reaches_the_trial(dirs: tuple[Path, Path, Path]) -> None:
+    binary_dir, scratch, home = dirs
+    record = binary_dir / "record"
+    claude = _versioned_claude(binary_dir, CLAUDE_STREAM, record, "2.1.248 (Claude Code)")
+    result = asyncio.run(run_local_cli(_request(claude, scratch, home=home)))
+    assert result.ok, result.detail
+    assert record.exists()
 
 
 def test_codex_success_reads_the_served_model_from_the_session_record(
@@ -369,6 +425,36 @@ def test_claude_sign_in_file_missing_points_at_the_explicit_import(tmp_path: Pat
     (tmp_path / ".claude").mkdir()
     (tmp_path / ".claude" / ".credentials.json").write_bytes(SECRET)
     assert claude_sign_in({"HOME": str(tmp_path)}).files == {".claude/.credentials.json": SECRET}
+
+
+def test_every_boundary_flag_is_one_the_recorded_cli_help_documents() -> None:
+    """The flags that make up the Claude boundary exist in the CLI help of 2.1.296.
+
+    A flag the CLI drops would fail the first trial, and a flag invented here would
+    describe a boundary the CLI does not have. `--add-dir` is in the fixture as the way
+    the boundary is widened, so the runner passing it would be visible.
+    """
+    help_text = (FIXTURES / "claude" / "help.flags.txt").read_text(encoding="utf-8")
+    documented = set(re.findall(r"--([A-Za-z][A-Za-z-]*)", help_text))
+    argv = ClaudeLocalAdapter().command("claude", "claude-opus-5-5", "prompt", Path("/w"))
+    # `--` ends option parsing before the prompt; it is not a flag.
+    passed = {token[2:] for token in argv if token.startswith("--") and token != "--"}
+    boundary = {
+        "restricted",
+        "safe-mode",
+        "strict-mcp-config",
+        "permission-prompts",
+        "tools",
+        "allowedTools",
+        "disallowedTools",
+    }
+    assert boundary <= passed, sorted(boundary - passed)
+    assert boundary <= documented, sorted(boundary - documented)
+    assert "--add-dir" not in passed
+    # The fixture says it records the flags the runner sets. Hold it to that, so a flag
+    # added to the command without re-capturing the help is caught here rather than at
+    # the first trial.
+    assert passed <= documented, sorted(passed - documented)
 
 
 def test_adapters_have_distinct_runtimes() -> None:
