@@ -38,7 +38,10 @@ def codex_sign_in(environ: Mapping[str, str]) -> SignIn:
 def claude_sign_in(environ: Mapping[str, str]) -> SignIn:
     """The Claude sign-in file. macOS keeps it in the Keychain, which only an explicit import
     reads (`arena providers import claude`), so on macOS this file is usually absent."""
-    path = _home(environ) / CREDENTIALS_FILE
+    config_dir = environ.get("CLAUDE_CONFIG_DIR")
+    path = (
+        Path(config_dir) / ".credentials.json" if config_dir else _home(environ) / CREDENTIALS_FILE
+    )
     try:
         return SignIn({CREDENTIALS_FILE: path.read_bytes()})
     except OSError as error:

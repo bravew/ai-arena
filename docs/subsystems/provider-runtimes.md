@@ -59,6 +59,18 @@ Claude names the served model in its `init` and `result` events. Codex `exec --j
 
 The stream fixtures [`stream.synthetic.jsonl`](../../fixtures/cli-contracts/claude/stream.synthetic.jsonl) and [`exec.synthetic.jsonl`](../../fixtures/cli-contracts/codex/exec.synthetic.jsonl) are synthetic. They follow Neumar's handling of the two CLIs and were not captured from a real run. The live check ([#194](https://github.com/bravew/ai-arena/issues/194)) replaces them.
 
+### Accounts
+
+`arena providers add | list | forget` and `import --keychain` ([`cli_accounts.py`](../../src/arena/cli_accounts.py), [`accounts/store.py`](../../src/arena/providers/accounts/store.py)) manage the sign-in a `local-cli` trial copies into its scratch home. They follow decisions D3 and D4.
+
+1. **Stored copy.** `~/.arena/accounts/<vendor>/files/...` holds the sign-in bytes and `meta.json` holds a redacted id, the source and a time. Directories are 0700, files 0600. `forget` deletes the stored copy and never touches the CLI's own files.
+2. **Discovery (D3).** On by default and read-only. It reads `$CODEX_HOME/auth.json` (only if `auth_mode` is `chatgpt`) and the Claude credentials file, and `list` shows each by redacted id and location. It copies nothing. `ARENA_DISCOVER_SIGNINS=0` turns it off. It never reads the macOS Keychain.
+3. **Keychain.** `arena providers import claude --keychain` is the only reader. It runs `security find-generic-password -s "Claude Code-credentials" -w` and stores the result. Whether the CLI accepts that JSON as `.credentials.json` in a scratch home is unverified until the live check ([#194](https://github.com/bravew/ai-arena/issues/194)).
+4. **Add.** `add claude|codex` prints a terms and usage warning (D4, nothing is stored or required), runs the vendor's own login (`claude auth login`, `codex login`) with the allowlisted environment, then stores the sign-in it finds. Claude on macOS has no file, so it points at the Keychain import. `--no-login` registers an existing sign-in.
+5. **API providers.** `add <provider> --env NAME` checks that the variable is set and prints the `keys:` line for `providers.yaml`. It never reads the value and does not edit `providers.yaml`.
+6. **Which sign-in a trial uses.** `resolve_sign_in`: the stored copy first, then the CLI's own file if discovery is on, else an error naming the fix.
+7. **Redacted id.** The first 8 hex characters of a SHA-256. For Codex it hashes `tokens.account_id`, so it survives token refresh. For Claude it hashes the sign-in bytes, so it changes when the token does.
+
 ## Constraints and failure behavior
 
 Findings that change the design, each marked as confirmed or still open. These
@@ -79,7 +91,7 @@ Fixtures hold no token, email or home path. Paths are replaced with `<HOME>` and
 ## Verification
 
 ```sh
-uv run pytest tests/providers/test_runtimes.py tests/runners/test_local_cli.py
+uv run pytest tests/providers/test_runtimes.py tests/runners/test_local_cli.py tests/providers/test_accounts.py
 uv run arena providers detect --json
 uv run python scripts/check_doc_links.py
 grep -rE "eyJ|@" fixtures/cli-contracts || echo "no secrets or identities"
