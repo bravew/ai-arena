@@ -16,11 +16,12 @@ def test_store_uses_wal_and_applies_numbered_migration(tmp_path: Path) -> None:
         assert [(row[0], row[1]) for row in migrations] == [
             (1, "001_initial"),
             (2, "002_trial_artifacts"),
+            (3, "003_judgments"),
         ]
         tables = {
             row[0] for row in store.execute("SELECT name FROM sqlite_master WHERE type='table'")
         }
-        assert {"runs", "trials", "calls", "scores", "trial_artifacts"} <= tables
+        assert {"runs", "trials", "calls", "scores", "trial_artifacts", "judgments"} <= tables
 
 
 def test_store_reopens_without_reapplying_migrations(tmp_path: Path) -> None:
@@ -31,7 +32,7 @@ def test_store_reopens_without_reapplying_migrations(tmp_path: Path) -> None:
         )
     with Store(db) as store:
         assert store.execute("SELECT id FROM runs").fetchone()[0] == "r"
-        assert store.execute("SELECT COUNT(*) FROM schema_migrations").fetchone()[0] == 2
+        assert store.execute("SELECT COUNT(*) FROM schema_migrations").fetchone()[0] == 3
 
 
 def test_trial_artifacts_can_share_a_cas_digest(tmp_path: Path) -> None:
