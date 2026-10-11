@@ -19,6 +19,7 @@ from arena.core.modelref import ModelRef
 from arena.core.models import Contestant, Score, Task
 from arena.core.store import Store
 from arena.gateway.auth import token_for_trial
+from arena.judges.client import HttpJudgeTransport, JudgeTransport, WireProtocol
 from arena.kits.matrix import expand_matrix
 from arena.providers.config import load_providers, parse_yaml
 from arena.runners.agent_trial import adapter_for, execute_agent_trial
@@ -29,7 +30,7 @@ from arena.runners.scheduler import TrialJob, expand_jobs, run_jobs
 from arena.scorers.base import Scorer, ScorerContext, ScorerError, validate_score
 from arena.scorers.docker_sandbox import docker_sandbox_factory, image_for_command
 from arena.scorers.execution import SandboxFactory
-from arena.scorers.task_scorers import task_scorers
+from arena.scorers.task_scorers import JudgeSetup, TaskScorers, task_scorers
 
 
 def _suite_dir(value: str) -> Path:
@@ -102,6 +103,10 @@ def _estimate_cost(jobs: list[TrialJob], models: dict[str, CatalogModel]) -> flo
     return total
 
 
+def _judge_transport(url: str, protocol: str) -> JudgeTransport:
+    return HttpJudgeTransport(url, protocol=cast(WireProtocol, protocol))
+
+
 def _sandbox_for(command: Sequence[str]) -> SandboxFactory:
     return docker_sandbox_factory(image_for_command(command))
 
@@ -121,6 +126,7 @@ async def _score_trial(
     recorder: RunRecorder,
     trial_id: str,
     scorers: Sequence[Scorer],
+    prompt: str = "",
 ) -> None:
     """Score a trial's stored artifacts and record each result.
 
@@ -133,6 +139,7 @@ async def _score_trial(
         trial_id=trial_id,
         artifacts={item.path: item for item in StoreArtifactIndex(store).for_trial(trial_id)},
         blobs=artifacts,
+        config={"prompt": prompt},
     )
 
     def run_scorers() -> list[Score]:
@@ -222,6 +229,17 @@ def run(
             help="Also run each task's execution scorer in a Docker sandbox (needs Docker).",
         ),
     ] = False,
+    judge_model: Annotated[
+        str | None,
+        typer.Option("--judge-model", help="Model that grades rubric-judge scorers."),
+    ] = None,
+    judge_url: Annotated[
+        str | None,
+        typer.Option("--judge-url", help="Gateway or endpoint the judge model is called through."),
+    ] = None,
+    judge_protocol: Annotated[
+        str, typer.Option("--judge-protocol", help="Wire protocol: openai or anthropic.")
+    ] = "openai",
 ) -> None:
     """Execute deterministic mock or metered agent trials with resumability."""
     try:
@@ -317,6 +335,27 @@ def run(
         Task.model_validate(parse_yaml(task_path)).id: task_path
         for task_path in sorted((suite_dir / "tasks").glob("*/task.yaml"))
     }
+
+    task_prompts = {
+        task_id: (path.parent / Task.model_validate(parse_yaml(path)).prompt_file).read_text(
+            encoding="utf-8"
+        )
+        for task_id, path in task_paths.items()
+    }
+    judge_setup: JudgeSetup | None = None
+    if (judge_model is None) != (judge_url is None):
+        typer.echo("error: --judge-model and --judge-url go together", err=True)
+        raise typer.Exit(code=2)
+    if judge_model is not None and judge_url is not None:
+        if judge_protocol not in ("openai", "anthropic"):
+            typer.echo("error: --judge-protocol must be openai or anthropic", err=True)
+            raise typer.Exit(code=2)
+        judge_setup = JudgeSetup(
+            transport=_judge_transport(judge_url, judge_protocol),
+            model=judge_model,
+            run_id=run_id,
+            rubric_root=Path.cwd(),
+        )
 
     async def execute(job: TrialJob) -> CompletionResult:
         task_path = task_paths[job.task.id]
@@ -436,12 +475,13 @@ def run(
                     else:
                         executor = execute
 
-                    def scorers_for(task: Task) -> tuple[Scorer, ...]:
+                    def built(task: Task) -> TaskScorers:
                         return task_scorers(
                             task,
                             task_paths[task.id].parent if score_execution else None,
                             _sandbox_for if score_execution else None,
-                        ).scorers
+                            judge_setup,
+                        )
 
                     async def recorded(job: TrialJob) -> CompletionResult:
                         trial_id = content_id({"run_id": run_id, "job_id": job.id})
@@ -452,7 +492,12 @@ def run(
                             if job.contestant.model.provider == "mock":
                                 _store_answer(store, artifact_store, trial_id, result.text)
                             await _score_trial(
-                                store, artifact_store, recorder, trial_id, scorers_for(job.task)
+                                store,
+                                artifact_store,
+                                recorder,
+                                trial_id,
+                                built(job.task).scorers,
+                                task_prompts[job.task.id],
                             )
                         except BaseException:
                             recorder.emit("trial_finished", trial_id, status="errored", **ids)
@@ -460,21 +505,11 @@ def run(
                         recorder.emit("trial_finished", trial_id, status="succeeded", **ids)
                         return result
 
-                    unapplied = sorted(
-                        {
-                            sid
-                            for task in tasks
-                            for sid in task_scorers(
-                                task,
-                                task_paths[task.id].parent if score_execution else None,
-                                _sandbox_for if score_execution else None,
-                            ).unapplied
-                        }
-                    )
+                    unapplied = sorted({sid for task in tasks for sid in built(task).unapplied})
                     if unapplied:
                         typer.echo(
-                            "note: not applied by `arena run` (need a sandbox or a judge): "
-                            + ", ".join(unapplied)
+                            "note: not applied by `arena run` (add --score-execution or "
+                            "--judge-model with --judge-url): " + ", ".join(unapplied)
                         )
                     recorder.emit("run_started", suite_id=suite_dir.name)
                     run_status = "errored"
