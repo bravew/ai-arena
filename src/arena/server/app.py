@@ -13,13 +13,15 @@ import time
 from collections.abc import Callable
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from typing import cast
+from typing import Any, cast
 from urllib.parse import parse_qs, unquote, urlsplit
 
 from arena.core.bundle import BundleError, build_bundle, default_home, open_run
 from arena.core.bundle_contract import validate_events_jsonl
 from arena.core.store import Store
+from arena.providers.config import Provider
 from arena.providers.runtimes import RuntimeReport
+from arena.runners.local_cli import LocalCliRequest, LocalCliResult
 from arena.server.votes import HumanVoteService, JsonlVoteStore
 
 _RUN_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,127}\Z")
@@ -43,6 +45,11 @@ def create_server(
     session_secret: bytes | None = None,
     vote_service: HumanVoteService | None = None,
     ops_detect: Callable[[], list[RuntimeReport]] | None = None,
+    provider_config: Path = Path("providers.yaml"),
+    provider_catalog: Path = Path("catalog/models.yaml"),
+    provider_environ: dict[str, str] | None = None,
+    provider_detect: Callable[[Provider], RuntimeReport] | None = None,
+    provider_test_runner: Callable[[LocalCliRequest], LocalCliResult] | None = None,
 ) -> ArenaHTTPServer:
     """Create a server instance; ``serve_forever`` starts it for real."""
     data_home = home or default_home()
@@ -366,6 +373,22 @@ def create_server(
         from arena.server.vote_routes import register_vote_routes
 
         register_ops_routes(server, data_home, detect=ops_detect)
+        from arena.server.providers_api import register_provider_routes
+
+        provider_options: dict[str, Any] = {}
+        if provider_detect is not None:
+            provider_options["detect"] = provider_detect
+        if provider_test_runner is not None:
+            provider_options["runner"] = provider_test_runner
+        if provider_environ is not None:
+            provider_options["environ"] = provider_environ
+        register_provider_routes(
+            server,
+            data_home,
+            providers_path=provider_config,
+            catalog_path=provider_catalog,
+            **provider_options,
+        )
         register_vote_routes(
             server,
             vote_service
