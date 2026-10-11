@@ -1,3 +1,4 @@
+import json
 from pathlib import Path
 
 import pytest
@@ -112,3 +113,104 @@ def test_validate_reports_all_files_and_paths(tmp_path: Path) -> None:
     assert str(providers) in result.output
     assert f"{providers}:providers.0.keys.0" in result.output
     assert str(catalog) in result.output
+
+
+def _provider_file(tmp_path: Path, body: str) -> Path:
+    config = tmp_path / "providers.yaml"
+    config.write_text("providers:\n" + body, encoding="utf-8")
+    return config
+
+
+def test_subscription_runtime_defaults_to_gateway(tmp_path: Path) -> None:
+    config = _provider_file(
+        tmp_path,
+        "  - id: anthropic-max\n    keys: []\n    subscription:\n"
+        "      vendor: claude\n      plan: max\n      import: own-sign-in\n",
+    )
+    subscription = load_providers(config).providers[0].subscription
+    assert subscription is not None
+    assert subscription.runtime == "gateway"
+
+
+@pytest.mark.parametrize("vendor", ["claude", "chatgpt"])
+def test_local_cli_runtime_is_accepted_for_vendors_with_a_cli_contract(
+    tmp_path: Path, vendor: str
+) -> None:
+    config = _provider_file(
+        tmp_path,
+        f"  - id: p\n    keys: []\n    subscription:\n"
+        f"      vendor: {vendor}\n      plan: plus\n      import: own-sign-in\n"
+        "      runtime: local-cli\n",
+    )
+    subscription = load_providers(config).providers[0].subscription
+    assert subscription is not None
+    assert subscription.runtime == "local-cli"
+
+
+def test_local_cli_runtime_is_rejected_for_a_vendor_without_a_cli_contract(
+    tmp_path: Path,
+) -> None:
+    config = _provider_file(
+        tmp_path,
+        "  - id: p\n    keys: []\n    subscription:\n"
+        "      vendor: copilot\n      plan: pro\n      import: own-sign-in\n"
+        "      runtime: local-cli\n",
+    )
+    with pytest.raises(ValueError, match="no CLI contract for vendor copilot"):
+        load_providers(config)
+
+
+def test_unknown_runtime_is_rejected(tmp_path: Path) -> None:
+    config = _provider_file(
+        tmp_path,
+        "  - id: p\n    keys: []\n    subscription:\n"
+        "      vendor: claude\n      plan: max\n      import: own-sign-in\n"
+        "      runtime: remote\n",
+    )
+    with pytest.raises(ValueError, match="runtime"):
+        load_providers(config)
+
+
+def test_runtime_on_an_api_key_provider_is_rejected(tmp_path: Path) -> None:
+    config = _provider_file(
+        tmp_path,
+        "  - id: p\n    runtime: local-cli\n    keys: [{id: main, env: P_KEY}]\n",
+    )
+    with pytest.raises(ValueError, match="belongs under subscription"):
+        load_providers(config)
+
+
+def test_subscription_with_keys_is_rejected(tmp_path: Path) -> None:
+    config = _provider_file(
+        tmp_path,
+        "  - id: p\n    keys: [{id: main, env: P_KEY}]\n    subscription:\n"
+        "      vendor: claude\n      plan: max\n      import: own-sign-in\n"
+        "      runtime: local-cli\n",
+    )
+    with pytest.raises(ValueError, match="keys or subscription"):
+        load_providers(config)
+
+
+def test_shipped_chatgpt_provider_uses_local_cli_and_models_exist_in_the_cli_fixture() -> None:
+    root = Path(__file__).parents[2]
+    providers = {p.id: p for p in load_providers(root / "providers.yaml").providers}
+    subscription = providers["openai-plus"].subscription
+    assert subscription is not None
+    assert (subscription.vendor, subscription.runtime) == ("chatgpt", "local-cli")
+
+    catalog = load_catalog(root / "catalog" / "models.yaml")
+    listed = {
+        model["slug"]
+        for model in json.loads(
+            (root / "fixtures/cli-contracts/codex/debug-models.empty-home.json").read_text(
+                encoding="utf-8"
+            )
+        )["models"]
+        if model["visibility"] == "list"
+    }
+    entries = [m for m in catalog.models if m.ref.startswith("openai-plus/")]
+    assert entries
+    for entry in entries:
+        assert entry.pricing == "subscription"
+        assert entry.price_per_mtok is None
+        assert entry.ref.split("/", 1)[1] in listed
