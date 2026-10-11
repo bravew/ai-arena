@@ -191,14 +191,32 @@ def test_subscription_with_keys_is_rejected(tmp_path: Path) -> None:
         load_providers(config)
 
 
-def test_shipped_chatgpt_provider_uses_local_cli_and_models_exist_in_the_cli_fixture() -> None:
+def test_shipped_subscription_providers_and_catalog_refs_validate() -> None:
     root = Path(__file__).parents[2]
+    result = CliRunner().invoke(
+        app, ["validate", str(root / "providers.yaml"), str(root / "catalog")]
+    )
+    assert result.exit_code == 0, result.output
+
     providers = {p.id: p for p in load_providers(root / "providers.yaml").providers}
-    subscription = providers["openai-plus"].subscription
-    assert subscription is not None
-    assert (subscription.vendor, subscription.runtime) == ("chatgpt", "local-cli")
+    for provider_id, vendor, plan in (
+        ("anthropic-max", "claude", "max"),
+        ("openai-plus", "chatgpt", "plus"),
+    ):
+        subscription = providers[provider_id].subscription
+        assert subscription is not None
+        assert (subscription.vendor, subscription.plan, subscription.runtime) == (
+            vendor,
+            plan,
+            "local-cli",
+        )
 
     catalog = load_catalog(root / "catalog" / "models.yaml")
+    subscription_model_refs = {
+        model.ref for model in catalog.models if model.pricing == "subscription"
+    }
+    assert "anthropic-max/claude-opus-5-5-sub" in subscription_model_refs
+    assert "anthropic/claude-opus-5-5-sub" not in subscription_model_refs
     listed = {
         model["slug"]
         for model in json.loads(

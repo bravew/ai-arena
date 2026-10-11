@@ -199,7 +199,6 @@ def test_provider_off_models_are_omitted() -> None:
     assert [item.ref for item in listed_models(PROVIDERS, CATALOG)] == [
         "anthropic/claude-opus-5-5",
         "anthropic/claude-sonnet-4-5",
-        "anthropic/claude-opus-5-5-sub",
     ]
 
 
