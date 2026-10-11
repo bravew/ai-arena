@@ -106,6 +106,82 @@ def test_request_runs_through_dispatch_and_releases_lane(tmp_path: Path) -> None
     assert metrics.snapshot()["counters"]["gateway_requests{status=200}"] == 1
 
 
+def test_metered_call_overrun_is_recorded_and_stops_later_dispatch(tmp_path: Path) -> None:
+    catalog_path = tmp_path / "catalog.yaml"
+    catalog_path.write_text(
+        "price_version: test-price\nmodels:\n"
+        "  - ref: anthropic/claude-opus-5-5\n"
+        "    protocols: [anthropic]\n"
+        "    price_per_mtok: {in: 1.0, out: 20000.0}\n",
+        encoding="utf-8",
+    )
+    catalog = load_catalog(catalog_path)
+
+    class MemoryLedger(LedgerWriter):
+        def __init__(self) -> None:
+            self.calls: list[Call] = []
+
+        def record(self, call: Call) -> Call:
+            token_counts = {"in": call.tokens.in_, "out": call.tokens.out}
+            prices = {"in": 1.0, "out": 20_000.0}
+            cost = sum(token_counts[key] * price for key, price in prices.items()) / 1_000_000
+            priced = call.model_copy(update={"cost_usd": cost, "price_version": "test-price"})
+            self.calls.append(priced)
+            return priced
+
+        def list_for_run(self, run_id: str) -> list[Call]:
+            return [call for call in self.calls if call.run_id == run_id]
+
+    ledger = MemoryLedger()
+    budget = Budget(cap_usd=1.0)
+    event_log = EventLog(tmp_path / "events")
+    dispatches = 0
+
+    async def dispatcher(context: DispatchContext) -> UpstreamResponse:
+        nonlocal dispatches
+        dispatches += 1
+        return UpstreamResponse(
+            200,
+            {"content-type": "application/json"},
+            _response_body(),
+            Tokens.model_validate({"in": 4, "out": 75}),
+            context.target.catalog_ref,
+        )
+
+    call_context = CallContext("run-metered", "acct-hash", "call-metered", 1, None, None)
+    app = create_app(
+        PROVIDERS,
+        catalog,
+        dispatcher=dispatcher,
+        context_provider=lambda target, caller: call_context,
+        translator=_translator,
+        budget=budget,
+        ledger=ledger,
+        events=event_log,
+    )
+    request = {
+        "model": "anthropic/claude-opus-5-5",
+        "messages": [],
+        "max_tokens": 10,
+    }
+    with TestClient(app) as client:
+        response = client.post(
+            "/v1/messages", headers={"Authorization": "Bearer arena-trial-1"}, json=request
+        )
+        assert response.status_code == 200
+        second = client.post(
+            "/v1/messages", headers={"Authorization": "Bearer arena-trial-1"}, json=request
+        )
+
+    assert response.status_code == 200
+    assert second.status_code == 402
+    assert dispatches == 1
+    assert budget.report().metered_spend_usd == pytest.approx(1.500004)
+    assert budget.report().remaining_usd == 0
+    assert len(ledger.calls) == 1
+    assert ledger.calls[0].cost_usd == pytest.approx(1.500004)
+
+
 def test_mock_provider_runs_auth_budget_lane_relay_ledger_and_events(tmp_path: Path) -> None:
     providers_path = tmp_path / "providers.yaml"
     providers_path.write_text("providers:\n  - id: mock\n    kind: mock\n", encoding="utf-8")
@@ -600,7 +676,12 @@ def test_stream_cancellation_releases_lane_and_budget_once(tmp_path: Path) -> No
 
         budget = Budget()
         events = EventLog(tmp_path / "events")
-        call_context = CallContext("trial-1", "acct-hash", "call-stream", 1, 0.01, "v1")
+
+        class MemoryLedger(LedgerWriter):
+            def record(self, call: Call) -> Call:
+                return call.model_copy(update={"cost_usd": 0.01, "price_version": "v1"})
+
+        call_context = CallContext("trial-1", "acct-hash", "call-stream", 1, 20.0, "v1")
         app = create_app(
             PROVIDERS,
             CATALOG,
@@ -609,9 +690,12 @@ def test_stream_cancellation_releases_lane_and_budget_once(tmp_path: Path) -> No
             translator=_translator,
             lanes=lane_pool,
             budget=budget,
+            ledger=MemoryLedger(),
             events=events,
         )
-        request_bytes = b'{"model":"anthropic/claude-opus-5-5","stream":true,"messages":[]}'
+        request_bytes = (
+            b'{"model":"anthropic/claude-opus-5-5","stream":true,"max_tokens":10,"messages":[]}'
+        )
         request_sent = False
         stream_started = asyncio.Event()
 
@@ -626,7 +710,7 @@ def test_stream_cancellation_releases_lane_and_budget_once(tmp_path: Path) -> No
         async def send(message: Message) -> None:
             if message["type"] == "http.response.body" and message.get("body") == b"first":
                 stream_started.set()
-                assert budget.report().remaining_usd == pytest.approx(19.99)
+                assert 19.5 < budget.report().remaining_usd < 20.0
                 disconnect.set()
 
         scope: Scope = {

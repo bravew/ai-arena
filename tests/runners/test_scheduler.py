@@ -157,7 +157,9 @@ def test_estimated_budget_skips_trials_before_dispatch() -> None:
     assert calls == 2
 
 
-def test_cli_run_refuses_non_mock_until_gateway_dispatcher_is_wired(tmp_path: Path) -> None:
+def test_cli_run_refuses_non_mock_completion_until_agent_scaffold_is_configured(
+    tmp_path: Path,
+) -> None:
     cli = CliRunner()
     result = cli.invoke(
         app,
@@ -174,7 +176,7 @@ def test_cli_run_refuses_non_mock_until_gateway_dispatcher_is_wired(tmp_path: Pa
     )
 
     assert result.exit_code == 2
-    assert "gateway dispatcher and actual-cost budget are not wired" in result.output
+    assert "no usable catalog price for anthropic/claude-sonnet-4-5" in result.output
     assert not (tmp_path / "arena.db").exists()
 
 

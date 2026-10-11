@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Mapping
+from contextlib import suppress
 from dataclasses import dataclass
 from enum import StrEnum
 from typing import Any, Protocol
@@ -84,7 +85,12 @@ class AgentRunner:
                 if not reached:
                     wiring = adapter.check(box)
                     if not wiring.ok:
+                        cancel = getattr(box, "cancel", None)
+                        if cancel is not None:
+                            await asyncio.to_thread(cancel)
                         execution.cancel()
+                        with suppress(asyncio.CancelledError):
+                            await execution
                         return AgentRunResult(
                             state=ReachedState.ERRORED,
                             error_class="wiring",
@@ -93,6 +99,21 @@ class AgentRunner:
                             detail=wiring.detail,
                             kit_install=kit_install,
                         )
+                if not reached:
+                    cancel = getattr(box, "cancel", None)
+                    if cancel is not None:
+                        await asyncio.to_thread(cancel)
+                try:
+                    await execution
+                except Exception as error:
+                    return AgentRunResult(
+                        state=ReachedState.ERRORED,
+                        error_class="execution",
+                        flags=flags,
+                        version=version,
+                        detail=f"agent command failed: {type(error).__name__}: {error}",
+                        kit_install=kit_install,
+                    )
                 calls = await gateway.calls(trial_token)
                 native = adapter.collect(box)
                 sessions = adapter.sessions(native, calls) if native is not None else []
@@ -113,6 +134,8 @@ class AgentRunner:
             finally:
                 if not execution.done():
                     execution.cancel()
+                    with suppress(asyncio.CancelledError):
+                        await execution
         except Exception as error:
             return AgentRunResult(
                 state=ReachedState.ERRORED,
