@@ -42,7 +42,7 @@
 
 - `docker run --mount` accepts only `key=value` fields. The workspace mount used to carry a bare `rw` field, which a real Docker daemon rejects; #27 fixed it and `tests/sandbox/test_docker.py` pins the accepted mount format.
 - URL MCP servers are registered in the daemon-side proxy with their resolved headers. The container receives only the proxy URL and its trial token. Redirects are returned to the caller, never followed with a daemon-held header.
-- This CP3 branch does not yet include the CP2 gateway server, so `McpProxy` is transport-agnostic and has no HTTP route mounted here. The epic sync must mount `/mcp/<name>` behind trial-token auth and send `McpSpan` events to the call/session span store.
+- The gateway server mounts `McpProxy` on `/mcp/{name}` (`create_app(..., mcp=...)`). Only trial tokens are accepted; judge and ops tokens get 403, and the trial token is never forwarded. Each request becomes an `McpSpan` through the proxy's span sink. Persisting those spans to the call/session span store is not wired yet. Tests use a fake upstream only; no real MCP server has been contacted.
 - The adapter supplies the agent-specific MCP settings serializer through `KitTarget`; this module does not claim one JSON/TOML layout fits every agent. Command MCP servers are represented for serializers but still run inside the container from a pinned package or image.
 - Git-backed skills are refused by `install_kit` until a pinned checkout is supplied to the installer. Local skills are copied and their bytes checked in the container.
 
