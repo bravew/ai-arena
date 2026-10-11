@@ -213,9 +213,9 @@ your real agent configuration.
 - **No real launch run.** The launch model has a catalog price. The run still
   needs a provider key and an explicit go-ahead to spend up to US$20
   ([#62](https://github.com/bravew/ai-arena/issues/62)).
-  [docs/launch-report.md](docs/launch-report.md) is the readiness report; it
-  predates the metered agent path and still says `arena run` has no gateway
-  dispatcher.
+  [docs/launch-report.md](docs/launch-report.md) is the readiness report. It
+  records the metered gateway path, the $20 cap and the test that proves it, and
+  the open decision about which third contestant the launch compares.
 - **`rubric-judge` has not run against a real model.** `arena run
   --judge-model <model> --judge-url <gateway> [--judge-protocol anthropic]`
   grades each answer against the task's rubric; tests use a fake transport
