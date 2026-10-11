@@ -1,0 +1,146 @@
+{
+ "_note": "codex debug models with an empty CODEX_HOME; prompt and instruction text omitted",
+ "model_fields": [
+  "additional_speed_tiers",
+  "apply_patch_tool_type",
+  "availability_nux",
+  "base_instructions",
+  "comp_hash",
+  "context_window",
+  "default_reasoning_level",
+  "default_reasoning_summary",
+  "default_verbosity",
+  "description",
+  "display_name",
+  "effective_context_window_percent",
+  "experimental_supported_tools",
+  "include_apps_usage_instructions",
+  "include_plugin_usage_instructions",
+  "include_skills_usage_instructions",
+  "input_modalities",
+  "max_context_window",
+  "model_messages",
+  "multi_agent_reasoning_effort",
+  "multi_agent_version",
+  "node_repl_auto_review_required",
+  "node_repl_disabled",
+  "priority",
+  "service_tiers",
+  "shell_type",
+  "slug",
+  "support_verbosity",
+  "supported_in_api",
+  "supported_reasoning_levels",
+  "supports_experimental_context",
+  "supports_image_detail_original",
+  "supports_reasoning_effort_updates",
+  "supports_search_tool",
+  "tool_mode",
+  "truncation_policy",
+  "upgrade",
+  "use_responses_lite",
+  "visibility",
+  "web_search_tool_type"
+ ],
+ "models": [
+  {
+   "slug": "gpt-6-astra",
+   "display_name": "GPT-6-Astra",
+   "visibility": "list",
+   "supported_in_api": true,
+   "priority": 2,
+   "default_reasoning_level": "low",
+   "context_window": 272000
+  },
+  {
+   "slug": "gpt-6.1-sol",
+   "display_name": "GPT-6.1-Sol",
+   "visibility": "list",
+   "supported_in_api": true,
+   "priority": 1,
+   "default_reasoning_level": "low",
+   "context_window": 272000
+  },
+  {
+   "slug": "gpt-6-sol",
+   "display_name": "GPT-6-Sol",
+   "visibility": "list",
+   "supported_in_api": true,
+   "priority": 3,
+   "default_reasoning_level": "medium",
+   "context_window": 272000
+  },
+  {
+   "slug": "gpt-6-luna",
+   "display_name": "GPT-6-Luna",
+   "visibility": "list",
+   "supported_in_api": true,
+   "priority": 4,
+   "default_reasoning_level": "medium",
+   "context_window": 272000
+  },
+  {
+   "slug": "gpt-5.6-sol",
+   "display_name": "GPT-5.6-Sol",
+   "visibility": "list",
+   "supported_in_api": true,
+   "priority": 5,
+   "default_reasoning_level": "low",
+   "context_window": 272000
+  },
+  {
+   "slug": "gpt-5.6-terra",
+   "display_name": "GPT-5.6-Terra",
+   "visibility": "list",
+   "supported_in_api": true,
+   "priority": 8,
+   "default_reasoning_level": "medium",
+   "context_window": 272000
+  },
+  {
+   "slug": "gpt-5.6-luna",
+   "display_name": "GPT-5.6-Luna",
+   "visibility": "list",
+   "supported_in_api": true,
+   "priority": 9,
+   "default_reasoning_level": "medium",
+   "context_window": 272000
+  },
+  {
+   "slug": "gpt-daybreak-blue-latest",
+   "display_name": "Daybreak Blue",
+   "visibility": "hide",
+   "supported_in_api": true,
+   "priority": 11,
+   "default_reasoning_level": "low",
+   "context_window": 272000
+  },
+  {
+   "slug": "gpt-daybreak-red-latest",
+   "display_name": "Daybreak Red",
+   "visibility": "hide",
+   "supported_in_api": true,
+   "priority": 12,
+   "default_reasoning_level": "medium",
+   "context_window": 372000
+  },
+  {
+   "slug": "gpt-5.5",
+   "display_name": "GPT-5.5",
+   "visibility": "list",
+   "supported_in_api": true,
+   "priority": 13,
+   "default_reasoning_level": "medium",
+   "context_window": 272000
+  },
+  {
+   "slug": "codex-auto-review",
+   "display_name": "Codex Auto Review",
+   "visibility": "hide",
+   "supported_in_api": true,
+   "priority": 43,
+   "default_reasoning_level": "medium",
+   "context_window": 272000
+  }
+ ]
+}

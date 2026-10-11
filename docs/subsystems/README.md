@@ -24,6 +24,7 @@ Subsystem references are added alongside the code they describe; see
 | [`ops-view.md`](ops-view.md) | The Ops view: calls ledger, usage, lanes, meters and hook stats |
 | [`viewer-live.md`](viewer-live.md) | The viewer and the Live stage |
 | [`importers.md`](importers.md) | Inspect, Harbor, and promptfoo result import and bundle export |
+| [`provider-runtimes.md`](provider-runtimes.md) | Vendor CLI and sign-in contracts for the `claude` and `codex` runtimes |
 
 ## Page template
 
