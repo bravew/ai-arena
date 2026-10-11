@@ -67,3 +67,52 @@ def test_mock_run_scores_constraint_tasks_and_reports_them(tmp_path: Path) -> No
         for line in events_path(tmp_path, run_id).read_text(encoding="utf-8").splitlines()
     ]
     assert kinds.count("score_added") == 2
+
+
+def test_score_execution_flag_runs_execution_scorers_in_the_sandbox(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from collections.abc import Generator, Mapping, Sequence
+    from contextlib import contextmanager
+
+    from arena import cli_run
+    from arena.scorers.execution import CommandResult, Sandbox, SandboxFactory
+
+    class PassingSandbox:
+        def put_files(self, files: Mapping[str, bytes]) -> None:
+            assert any(path.startswith("tests/") for path in files)
+
+        def run(self, command: Sequence[str], *, timeout_s: float) -> CommandResult:
+            return CommandResult(0)
+
+    def sandbox_for(command: Sequence[str]) -> SandboxFactory:
+        @contextmanager
+        def factory() -> Generator[Sandbox]:
+            yield PassingSandbox()
+
+        return factory
+
+    monkeypatch.setattr(cli_run, "_sandbox_for", sandbox_for)
+    runner = CliRunner()
+    result = runner.invoke(
+        app,
+        [
+            "run",
+            "suites/smoke",
+            "-c",
+            "mock-a",
+            "--repeats",
+            "1",
+            "--score-execution",
+            "--db",
+            str(tmp_path / "arena.db"),
+        ],
+    )
+    assert result.exit_code == 0, result.output
+    assert "not applied" not in result.output
+    run_id = result.output.split("Run ", 1)[1].split(":", 1)[0]
+    kinds = [
+        json.loads(line)["kind"]
+        for line in events_path(tmp_path, run_id).read_text(encoding="utf-8").splitlines()
+    ]
+    assert kinds.count("score_added") == 4
