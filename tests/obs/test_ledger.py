@@ -164,18 +164,22 @@ def test_subscription_cost_is_unknown_and_budget_only_counts_api_spend(tmp_path:
     asyncio.run(run())
 
 
-def test_budget_reserves_spend_for_concurrent_calls(tmp_path: Path) -> None:
+def test_budget_reserves_remaining_cap_before_metered_dispatch(tmp_path: Path) -> None:
     async def run() -> None:
         budget = Budget()
         events = EventLog(tmp_path / "events")
         accepted = await budget.check_call(
-            _call(call_id="c1").model_copy(update={"cost_usd": 12.0}), events
+            _call(call_id="c1").model_copy(update={"cost_usd": 0.0}),
+            events,
+            reserve_remaining=True,
         )
-        with pytest.raises(BudgetExceeded):
+        assert budget.report().remaining_usd == 0.0
+        with pytest.raises(BudgetExceeded, match="another call holds"):
             await budget.check_call(
-                _call(call_id="c2").model_copy(update={"cost_usd": 9.0}), events
+                _call(call_id="c2").model_copy(update={"cost_usd": 0.0}),
+                events,
+                reserve_remaining=True,
             )
-        assert budget.report().remaining_usd == 8.0
         await accepted.settle(10.0)
         assert budget.metered_spend_usd == 10.0
         assert budget.report().remaining_usd == 10.0

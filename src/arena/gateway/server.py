@@ -451,10 +451,14 @@ async def _protocol(request: Request) -> Response:
         )
         cost_usd = context.cost_usd if context is not None else None
         if state.budget is not None and context is not None and state.events is not None:
+            cost_usd = None if target.model.pricing == "subscription" else context.cost_usd
             call = _build_call(request, target, caller, context, seq, run_id, cost_usd, 0)
             try:
                 reservation = await state.budget.check_call(
-                    call, state.events, subscription=target.model.pricing == "subscription"
+                    call,
+                    state.events,
+                    subscription=target.model.pricing == "subscription",
+                    reserve_remaining=target.model.pricing != "subscription",
                 )
             except BudgetExceeded:
                 result_status = 402

@@ -73,15 +73,28 @@ class Budget:
         return self._metered_spend
 
     async def check_call(
-        self, call: Call, events: EventLog, *, subscription: bool = False
+        self,
+        call: Call,
+        events: EventLog,
+        *,
+        subscription: bool = False,
+        reserve_remaining: bool = False,
     ) -> BudgetReservation:
-        """Atomically reserve a call's estimated cost before dispatching it upstream."""
-        if subscription == (call.cost_usd is not None):
+        """Reserve estimated spend, or the entire remaining cap for one metered request."""
+        if subscription == (call.cost_usd is not None) and not (
+            reserve_remaining and not subscription and call.cost_usd is None
+        ):
             raise ValueError("subscription calls require null cost; metered calls require a price")
         amount = call.cost_usd or 0.0
         if not math.isfinite(amount) or amount < 0:
             raise ValueError("estimated cost must be finite and non-negative")
         async with self._lock:
+            if not subscription and reserve_remaining:
+                if self._reserved:
+                    raise BudgetExceeded("another call holds the remaining run budget reserve")
+                amount = max(0.0, self.cap_usd - self._metered_spend)
+                if amount == 0:
+                    raise BudgetExceeded("the run metered API budget is exhausted")
             proposed_spend = (
                 self._metered_spend
                 + sum(reserved_amount for reserved_amount, _ in self._reserved.values())
@@ -158,7 +171,7 @@ class Budget:
                 return
             del self._reserved[call.id]
             self._metered_spend += final_cost_usd
-            if final_cost_usd > reserved_amount or self._metered_spend > self.cap_usd:
+            if final_cost_usd > reserved_amount or self._metered_spend >= self.cap_usd:
                 self._over_cap = True
                 raise BudgetExceeded(
                     f"actual charge ${final_cost_usd:.6f} exceeded "

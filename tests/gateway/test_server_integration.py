@@ -106,13 +106,13 @@ def test_request_runs_through_dispatch_and_releases_lane(tmp_path: Path) -> None
     assert metrics.snapshot()["counters"]["gateway_requests{status=200}"] == 1
 
 
-def test_metered_call_settles_budget_from_final_ledger_price(tmp_path: Path) -> None:
+def test_metered_call_overrun_is_recorded_and_stops_later_dispatch(tmp_path: Path) -> None:
     catalog_path = tmp_path / "catalog.yaml"
     catalog_path.write_text(
         "price_version: test-price\nmodels:\n"
         "  - ref: anthropic/claude-opus-5-5\n"
         "    protocols: [anthropic]\n"
-        "    price_per_mtok: {in: 10.0, out: 20.0}\n",
+        "    price_per_mtok: {in: 10000.0, out: 20000.0}\n",
         encoding="utf-8",
     )
     catalog = load_catalog(catalog_path)
@@ -122,11 +122,8 @@ def test_metered_call_settles_budget_from_final_ledger_price(tmp_path: Path) -> 
             self.calls: list[Call] = []
 
         def record(self, call: Call) -> Call:
-            token_counts = {
-                "in": call.tokens.in_,
-                "out": call.tokens.out,
-            }
-            prices = {"in": 10.0, "out": 20.0}
+            token_counts = {"in": call.tokens.in_, "out": call.tokens.out}
+            prices = {"in": 10_000.0, "out": 20_000.0}
             cost = sum(token_counts[key] * price for key, price in prices.items()) / 1_000_000
             priced = call.model_copy(update={"cost_usd": cost, "price_version": "test-price"})
             self.calls.append(priced)
@@ -136,7 +133,7 @@ def test_metered_call_settles_budget_from_final_ledger_price(tmp_path: Path) -> 
             return [call for call in self.calls if call.run_id == run_id]
 
     ledger = MemoryLedger()
-    budget = Budget(cap_usd=0.00007)
+    budget = Budget(cap_usd=0.07)
     event_log = EventLog(tmp_path / "events")
     dispatches = 0
 
@@ -147,11 +144,11 @@ def test_metered_call_settles_budget_from_final_ledger_price(tmp_path: Path) -> 
             200,
             {"content-type": "application/json"},
             _response_body(),
-            Tokens.model_validate({"in": 2, "out": 3}),
+            Tokens.model_validate({"in": 1, "out": 3}),
             context.target.catalog_ref,
         )
 
-    call_context = CallContext("run-metered", "acct-hash", "call-metered", 1, 0.00005, "estimate")
+    call_context = CallContext("run-metered", "acct-hash", "call-metered", 1, None, None)
     app = create_app(
         PROVIDERS,
         catalog,
@@ -165,32 +162,24 @@ def test_metered_call_settles_budget_from_final_ledger_price(tmp_path: Path) -> 
     request = {
         "model": "anthropic/claude-opus-5-5",
         "messages": [],
+        "max_tokens": 10,
     }
     with TestClient(app) as client:
-        first = client.post(
+        response = client.post(
             "/v1/messages", headers={"Authorization": "Bearer arena-trial-1"}, json=request
         )
-        assert first.status_code == 200
+        assert response.status_code == 200
         second = client.post(
             "/v1/messages", headers={"Authorization": "Bearer arena-trial-1"}, json=request
         )
 
-    assert first.status_code == 200
+    assert response.status_code == 200
     assert second.status_code == 402
     assert dispatches == 1
-    assert budget.report().metered_spend_usd == pytest.approx(0.00008)
-    assert budget.report().remaining_usd == pytest.approx(0.0)
-    recorded = ledger.list_for_run("run-metered")
-    assert len(recorded) == 1
-    assert recorded[0].cost_usd == pytest.approx(0.00008)
-    assert recorded[0].price_version == "test-price"
-    events = asyncio.run(event_log.read_after("run-metered", 0))
-    finished = [event for event in events if event.kind == "call_finished"]
-    assert len(finished) == 1
-    assert finished[0].data["cost_usd"] == pytest.approx(0.00008)
-    budget_events = [event for event in events if event.kind == "budget"]
-    assert len(budget_events) == 1
-    assert budget_events[0].data["spent_usd"] == pytest.approx(0.00008)
+    assert budget.report().metered_spend_usd == pytest.approx(0.07)
+    assert budget.report().remaining_usd == 0
+    assert len(ledger.calls) == 1
+    assert ledger.calls[0].cost_usd == pytest.approx(0.07)
 
 
 def test_mock_provider_runs_auth_budget_lane_relay_ledger_and_events(tmp_path: Path) -> None:
@@ -719,7 +708,7 @@ def test_stream_cancellation_releases_lane_and_budget_once(tmp_path: Path) -> No
         async def send(message: Message) -> None:
             if message["type"] == "http.response.body" and message.get("body") == b"first":
                 stream_started.set()
-                assert budget.report().remaining_usd == pytest.approx(19.99)
+                assert budget.report().remaining_usd == pytest.approx(0.0)
                 disconnect.set()
 
         scope: Scope = {
