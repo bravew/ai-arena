@@ -82,6 +82,7 @@ def main(
     """Compare AI models, agents, and kits on coding and content tasks."""
 
 
+__import__("arena.cli_run")
 import_module("arena.cli_report")
 import_module("arena.cli_serve")
 

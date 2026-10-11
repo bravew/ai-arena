@@ -37,6 +37,7 @@ from arena.gateway.auth import Caller, Purpose, authenticate
 from arena.gateway.budget import Budget, BudgetExceeded
 from arena.gateway.classify import FailureClass, classify_failure
 from arena.gateway.lanes import KeyLane, LanePermit, LanePool, LanePoolFull, LaneRejected
+from arena.gateway.mcp_proxy import McpProxy
 from arena.gateway.plan import Candidate, plan_candidates
 from arena.gateway.redact import RedactingFilter, scrub_headers, scrub_json
 from arena.gateway.relay import PreparedRelay, RelayRequest, prepare_relay
@@ -133,6 +134,7 @@ class GatewayState:
         exporter: OtlpExporter | None = None,
         effort_mapping: Mapping[str, Mapping[str, Any]] | None = None,
         rests: RestBook | None = None,
+        mcp: McpProxy | None = None,
     ) -> None:
         if max_body_bytes < 1 or max_encoded_bytes < 1:
             raise ValueError("body limits must be positive")
@@ -157,6 +159,7 @@ class GatewayState:
         self.exporter = exporter
         self.effort_mapping = effort_mapping
         self.rests = rests or RestBook()
+        self.mcp = mcp
         self.sequence = 0
         self.sequence_lock = asyncio.Lock()
 
@@ -236,6 +239,7 @@ def create_app(
     exporter: OtlpExporter | None = None,
     effort_mapping: Mapping[str, Mapping[str, Any]] | None = None,
     rests: RestBook | None = None,
+    mcp: McpProxy | None = None,
 ) -> Starlette:
     """Create a gateway app with validated provider and catalog configuration."""
     state = GatewayState(
@@ -255,6 +259,7 @@ def create_app(
         exporter=exporter,
         effort_mapping=effort_mapping,
         rests=rests,
+        mcp=mcp,
     )
 
     @asynccontextmanager
@@ -276,6 +281,7 @@ def create_app(
             Route("/v1/models", _models, methods=["GET"]),
             Route("/v1beta/models/{model:path}:streamGenerateContent", _protocol, methods=["POST"]),
             Route("/v1beta/models/{model:path}:streamGenerateContent", _protocol, methods=["GET"]),
+            Route("/mcp/{name}", _mcp, methods=["POST", "GET", "DELETE"]),
             *status_routes(
                 lanes=state.lane_snapshots,
                 metrics=state.metrics,
@@ -303,6 +309,29 @@ async def _models(request: Request) -> Response:
         for model in listed_models(_state(request).providers, _state(request).catalog)
     ]
     return JSONResponse({"object": "list", "data": models})
+
+
+async def _mcp(request: Request) -> Response:
+    """Forward a trial's request to one of its kit's URL MCP servers (DEV_PLAN §6.5)."""
+    state = _state(request)
+    caller = _caller(request)
+    if caller.purpose is not Purpose.TRIAL or caller.trial_id is None:
+        return _error(403, "forbidden", "only a trial may call MCP servers")
+    if state.mcp is None:
+        return _error(404, "unknown_mcp_server", "no MCP servers are configured")
+    body = bytearray()
+    async for chunk in request.stream():
+        body.extend(chunk)
+        if len(body) > state.max_body_bytes:
+            return _error(413, "request_too_large", "MCP request body is too large")
+    reply = await state.mcp.handle(
+        request.path_params["name"],
+        request.method,
+        bytes(body),
+        request.headers,
+        trial_id=caller.trial_id,
+    )
+    return StreamingResponse(reply.body, status_code=reply.status_code, headers=dict(reply.headers))
 
 
 async def _protocol(request: Request) -> Response:
