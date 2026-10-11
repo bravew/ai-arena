@@ -58,6 +58,7 @@ async def execute_agent_trial(
     gateway: Any,
     gateway_url: str,
     gateway_container: str,
+    budget_usd: float,
     sandbox: DockerSandbox | None = None,
     limits: SandboxLimits | None = None,
     docker_exec: DockerExec | None = None,
@@ -112,9 +113,30 @@ async def execute_agent_trial(
                 result.detail or f"agent did not complete a metered gateway call ({result.state})"
             )
         calls = await gateway.calls(token)
+        if any(call.status is None or call.status >= 400 for call in calls):
+            raise AgentTrialError("gateway recorded an unsuccessful call for this trial")
         if not calls:
             raise AgentTrialError("gateway reported a reached state without persisted calls")
+        if any(call.run_id != run_id or call.trial_id != trial_id for call in calls):
+            raise AgentTrialError("gateway returned a call attributed to a different run or trial")
+        if any(call.model_asked != str(job.contestant.model) for call in calls):
+            raise AgentTrialError("gateway call model does not match this contestant")
+        if any(call.cost_usd is None for call in calls):
+            raise AgentTrialError("metered agent trial contains an unpriced gateway call")
+        events = gateway.call_events_for_trial(trial_id)
+        event_ids = {event.get("ref") for event in events}
+        if event_ids != {call.id for call in calls}:
+            raise AgentTrialError("gateway call ledger and completion events do not match")
+        total_cost = sum(call.cost_usd for call in calls)
+        if total_cost > budget_usd:
+            raise AgentTrialError("actual gateway charges exceeded the run budget")
         _persist_workspace(store, artifacts, trial_id, workspace)
+        store.execute(
+            "UPDATE trials SET flags_json=? WHERE id=?",
+            (result.flags.model_dump_json(), trial_id),
+        )
+        if result.kit_install is not None:
+            await gateway.record_kit_install(trial_id, result.kit_install)
         if result.transcript is not None:
             content = getattr(result.transcript, "content", None)
             if isinstance(content, str):
@@ -127,7 +149,6 @@ async def execute_agent_trial(
                     "text/plain",
                     "markdown",
                 )
-        total_cost = sum(call.cost_usd or 0.0 for call in calls)
         return CompletionResult(text="", cost_usd=total_cost)
 
 

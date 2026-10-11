@@ -42,6 +42,9 @@ class DockerAgentBox:
             raise ValueError("command must contain non-empty arguments")
         return self._docker(("exec", self._id, *command), None).decode()
 
+    def cancel(self) -> None:
+        self._docker(("stop", self._id), None)
+
 
 def _check_path(path: str) -> None:
     if not path.startswith("/") or "\x00" in path:
