@@ -11,8 +11,8 @@ tasks. The design is in [docs/DEV_PLAN.md](docs/DEV_PLAN.md).
 > - There is no real provider run. The launch model `anthropic/claude-sonnet-4-5`
 >   has no verified price in the catalog, so a metered run refuses to start.
 >   [#62](https://github.com/bravew/ai-arena/issues/62) tracks it.
-> - `arena run` does not apply the `rubric-judge` scorers a task defines, so
->   content and web tasks have no judged score. See [Known gaps](#known-gaps).
+> - `rubric-judge` scoring has only been run against a fake judge. It needs a
+>   priced judge model behind a gateway, the same blocker as #62.
 
 ## Architecture
 
@@ -180,13 +180,14 @@ your real agent configuration.
   [docs/launch-report.md](docs/launch-report.md) is the readiness report; it
   predates the metered agent path and still says `arena run` has no gateway
   dispatcher.
-- **`arena run` does not apply `rubric-judge` scorers**, which need a judge
-  model behind the gateway ([#170](https://github.com/bravew/ai-arena/issues/170)).
-  It prints which scorers it skipped, so a leaderboard score is the mean over
-  the scorers that ran. `constraints` scorers always run. `execution` scorers
-  run only with `arena run --score-execution`, in a Docker container with no
-  network (the Python image above, plus `node:22-slim`, `rust:1-slim` and
-  `golang:1.23`, pulled on first use). Without the flag they are skipped.
+- **`rubric-judge` has not run against a real model.** `arena run
+  --judge-model <model> --judge-url <gateway> [--judge-protocol anthropic]`
+  grades each answer against the task's rubric; tests use a fake transport
+  only. Without the flags `run` prints the scorer as skipped. `constraints`
+  scorers always run, and `execution` scorers run with `--score-execution`
+  (Docker, no network; the Python image above plus `node:22-slim`,
+  `rust:1-slim` and `golang:1.23`, pulled on first use). A leaderboard score is
+  the mean over the scorers that ran.
 - **A resumed run** appends a second `run_started` and `run_finished` pair to
   the run's events.
 - **Kits and native sessions** are not resolved or persisted by `arena run`.
