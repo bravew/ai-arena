@@ -9,10 +9,32 @@
   --disallowedTools, --disallowed-tools <tools...>
       Comma or space-separated list of tool names to deny (e.g. "Bash(git *)
       Edit")
+  --model <model>                       Model for the current session. Provide
+                                        an alias for the latest model (e.g.
+                                        'fable', 'opus', or 'sonnet') or a
+                                        model's full name.
+  --no-session-persistence              Disable session persistence - sessions
+                                        will not be saved to disk and cannot be
+                                        resumed (only works with --print)
+  --output-format <format>              Output format (only works with --print):
+                                        "text" (default), "json" (single
+                                        result), or "stream-json" (realtime
+                                        streaming) (choices: "text", "json",
+                                        "stream-json")
   --permission-mode <mode>              Permission mode to use for the session
                                         (choices: "acceptEdits", "auto",
                                         "bypassPermissions", "manual",
                                         "dontAsk", "plan")
+  -p, --print                           Print response and exit (useful for
+                                        pipes). Note: The workspace trust dialog
+                                        is skipped when Claude is run in
+                                        non-interactive mode (via -p, or when
+                                        stdout is not a TTY, e.g. piped or
+                                        redirected output). Only use this in
+                                        directories you trust. Settings files
+                                        that fail validation are silently
+                                        ignored in this mode (no error dialog is
+                                        shown).
   --permission-prompts <target>         Who answers permission prompts with
                                         --print: "host" (the SDK host or
                                         --permission-prompt-tool) or "none"
@@ -54,3 +76,5 @@
                                         tools, "default" to use all tools, or
                                         specify tool names (e.g.
                                         "Bash,Edit,Read").
+  --verbose                             Override verbose mode setting from
+                                        config

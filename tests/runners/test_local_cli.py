@@ -437,7 +437,8 @@ def test_every_boundary_flag_is_one_the_recorded_cli_help_documents() -> None:
     help_text = (FIXTURES / "claude" / "help.flags.txt").read_text(encoding="utf-8")
     documented = set(re.findall(r"--([A-Za-z][A-Za-z-]*)", help_text))
     argv = ClaudeLocalAdapter().command("claude", "claude-opus-5-5", "prompt", Path("/w"))
-    passed = {token[2:] for token in argv if token.startswith("--")}
+    # `--` ends option parsing before the prompt; it is not a flag.
+    passed = {token[2:] for token in argv if token.startswith("--") and token != "--"}
     boundary = {
         "restricted",
         "safe-mode",
@@ -450,6 +451,10 @@ def test_every_boundary_flag_is_one_the_recorded_cli_help_documents() -> None:
     assert boundary <= passed, sorted(boundary - passed)
     assert boundary <= documented, sorted(boundary - documented)
     assert "--add-dir" not in passed
+    # The fixture says it records the flags the runner sets. Hold it to that, so a flag
+    # added to the command without re-capturing the help is caught here rather than at
+    # the first trial.
+    assert passed <= documented, sorted(passed - documented)
 
 
 def test_adapters_have_distinct_runtimes() -> None:
