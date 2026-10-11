@@ -11,9 +11,8 @@ tasks. The design is in [docs/DEV_PLAN.md](docs/DEV_PLAN.md).
 > - There is no real provider run. The launch model `anthropic/claude-sonnet-4-5`
 >   has no verified price in the catalog, so a metered run refuses to start.
 >   [#62](https://github.com/bravew/ai-arena/issues/62) tracks it.
-> - `arena run` scores only the `constraints` scorers a task defines. Its
->   `execution` and `rubric-judge` scorers are not applied yet. See
->   [Known gaps](#known-gaps).
+> - `arena run` does not apply the `rubric-judge` scorers a task defines, so
+>   content and web tasks have no judged score. See [Known gaps](#known-gaps).
 
 ## Architecture
 
@@ -91,6 +90,7 @@ Docker images, only when you run agent contestants:
 ```sh
 docker build -f docker/gateway.Dockerfile -t arena-gateway:dev .   # also built on demand by arena run
 docker build -f docker/agents/aider.Dockerfile -t arena-aider:<version> .
+docker build -f docker/scorer-python.Dockerfile -t arena-scorer-python:1 docker   # only for run --score-execution
 # likewise claude_code, codex_cli and pi; the tag each adapter expects is its IMAGE constant in src/arena/agents/
 ```
 
@@ -180,12 +180,13 @@ your real agent configuration.
   [docs/launch-report.md](docs/launch-report.md) is the readiness report; it
   predates the metered agent path and still says `arena run` has no gateway
   dispatcher.
-- **`arena run` applies only `constraints` scorers**, to the mock completion's
-  `answer.md`. The `execution` scorer needs a sandbox with the task's files and
-  `rubric-judge` needs a judge model, so `run` prints which ones it skipped.
-  A leaderboard score is therefore the mean over the scored trials only, not
-  over the whole suite, and agent trials are not scored by `run` yet.
-  [#168](https://github.com/bravew/ai-arena/issues/168) tracks it.
+- **`arena run` does not apply `rubric-judge` scorers**, which need a judge
+  model behind the gateway ([#170](https://github.com/bravew/ai-arena/issues/170)).
+  It prints which scorers it skipped, so a leaderboard score is the mean over
+  the scorers that ran. `constraints` scorers always run. `execution` scorers
+  run only with `arena run --score-execution`, in a Docker container with no
+  network (the Python image above, plus `node:22-slim`, `rust:1-slim` and
+  `golang:1.23`, pulled on first use). Without the flag they are skipped.
 - **A resumed run** appends a second `run_started` and `run_finished` pair to
   the run's events.
 - **Kits and native sessions** are not resolved or persisted by `arena run`.

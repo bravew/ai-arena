@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Sequence
 from pathlib import Path
 from typing import Annotated, Any, cast
 
@@ -15,7 +16,7 @@ from arena.cli_score import StoreArtifactIndex, save_score
 from arena.core.cas import ArtifactStore
 from arena.core.ids import content_id
 from arena.core.modelref import ModelRef
-from arena.core.models import Contestant, Task
+from arena.core.models import Contestant, Score, Task
 from arena.core.store import Store
 from arena.gateway.auth import token_for_trial
 from arena.kits.matrix import expand_matrix
@@ -25,7 +26,9 @@ from arena.runners.completion import CompletionResult, mock_completion
 from arena.runners.metered_gateway import GatewayContainer, GatewayRuntimeError, RunGateway
 from arena.runners.run_record import RunRecorder, contestant_snapshot
 from arena.runners.scheduler import TrialJob, expand_jobs, run_jobs
-from arena.scorers.base import ScorerContext, validate_score
+from arena.scorers.base import Scorer, ScorerContext, ScorerError, validate_score
+from arena.scorers.docker_sandbox import docker_sandbox_factory, image_for_command
+from arena.scorers.execution import SandboxFactory
 from arena.scorers.task_scorers import task_scorers
 
 
@@ -99,6 +102,10 @@ def _estimate_cost(jobs: list[TrialJob], models: dict[str, CatalogModel]) -> flo
     return total
 
 
+def _sandbox_for(command: Sequence[str]) -> SandboxFactory:
+    return docker_sandbox_factory(image_for_command(command))
+
+
 def _store_answer(store: Store, artifacts: ArtifactStore, trial_id: str, text: str) -> None:
     """Keep a completion's text as the trial's `answer.md`, so it can be scored and shown."""
     store.execute(
@@ -108,20 +115,34 @@ def _store_answer(store: Store, artifacts: ArtifactStore, trial_id: str, text: s
     )
 
 
-def _score_answer(
-    store: Store, artifacts: ArtifactStore, recorder: RunRecorder, trial_id: str, task: Task
+async def _score_trial(
+    store: Store,
+    artifacts: ArtifactStore,
+    recorder: RunRecorder,
+    trial_id: str,
+    scorers: Sequence[Scorer],
 ) -> None:
-    """Apply the task's constraint scorers to the stored answer and record each result."""
-    scorers = task_scorers(task).scorers
+    """Score a trial's stored artifacts and record each result.
+
+    A scorer that cannot run leaves the trial unscored and prints why, since an unknown score
+    must not be written as a result. `arena score` can score it again.
+    """
     if not scorers:
         return
-    index = StoreArtifactIndex(store)
     context = ScorerContext(
         trial_id=trial_id,
-        artifacts={item.path: item for item in index.for_trial(trial_id)},
+        artifacts={item.path: item for item in StoreArtifactIndex(store).for_trial(trial_id)},
         blobs=artifacts,
     )
-    results = [validate_score(scorer, context, scorer.score(context)) for scorer in scorers]
+
+    def run_scorers() -> list[Score]:
+        return [validate_score(scorer, context, scorer.score(context)) for scorer in scorers]
+
+    try:
+        results = await asyncio.to_thread(run_scorers)
+    except ScorerError as error:
+        typer.echo(f"warning: trial {trial_id} was not scored: {error}", err=True)
+        return
     with store.transaction() as connection:
         for score in results:
             save_score(connection, score)
@@ -194,6 +215,13 @@ def run(
     providers: Annotated[Path, typer.Option("--providers")] = Path("providers.yaml"),
     catalog: Annotated[Path, typer.Option("--catalog")] = Path("catalog/models.yaml"),
     home: Annotated[Path | None, typer.Option("--home")] = None,
+    score_execution: Annotated[
+        bool,
+        typer.Option(
+            "--score-execution",
+            help="Also run each task's execution scorer in a Docker sandbox (needs Docker).",
+        ),
+    ] = False,
 ) -> None:
     """Execute deterministic mock or metered agent trials with resumability."""
     try:
@@ -408,6 +436,13 @@ def run(
                     else:
                         executor = execute
 
+                    def scorers_for(task: Task) -> tuple[Scorer, ...]:
+                        return task_scorers(
+                            task,
+                            task_paths[task.id].parent if score_execution else None,
+                            _sandbox_for if score_execution else None,
+                        ).scorers
+
                     async def recorded(job: TrialJob) -> CompletionResult:
                         trial_id = content_id({"run_id": run_id, "job_id": job.id})
                         ids = {"contestant_id": job.contestant.id, "task_id": job.task.id}
@@ -416,7 +451,9 @@ def run(
                             result = await executor(job)
                             if job.contestant.model.provider == "mock":
                                 _store_answer(store, artifact_store, trial_id, result.text)
-                                _score_answer(store, artifact_store, recorder, trial_id, job.task)
+                            await _score_trial(
+                                store, artifact_store, recorder, trial_id, scorers_for(job.task)
+                            )
                         except BaseException:
                             recorder.emit("trial_finished", trial_id, status="errored", **ids)
                             raise
@@ -424,9 +461,17 @@ def run(
                         return result
 
                     unapplied = sorted(
-                        {sid for task in tasks for sid in task_scorers(task).unapplied}
+                        {
+                            sid
+                            for task in tasks
+                            for sid in task_scorers(
+                                task,
+                                task_paths[task.id].parent if score_execution else None,
+                                _sandbox_for if score_execution else None,
+                            ).unapplied
+                        }
                     )
-                    if unapplied and not non_mock:
+                    if unapplied:
                         typer.echo(
                             "note: not applied by `arena run` (need a sandbox or a judge): "
                             + ", ".join(unapplied)
