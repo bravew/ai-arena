@@ -633,7 +633,10 @@ async def _protocol(request: Request) -> Response:
                 if reservation is not None:
                     if 200 <= status_code < 300:
                         try:
-                            await reservation.settle(final_call.cost_usd)
+                            await reservation.settle(
+                                final_call.cost_usd,
+                                final_call=final_call,
+                            )
                         except BudgetExceeded:
                             logger.warning("actual call cost exceeded its run budget reservation")
                     else:

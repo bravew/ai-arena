@@ -35,11 +35,13 @@ class BudgetReservation:
         self.subscription = subscription
         self._settled = False
 
-    async def settle(self, final_cost_usd: float | None = None) -> None:
+    async def settle(
+        self, final_cost_usd: float | None = None, *, final_call: Call | None = None
+    ) -> None:
         if self._settled:
             raise RuntimeError("budget reservation is already settled")
         try:
-            await self.budget.settle(self, final_cost_usd, billable=True)
+            await self.budget.settle(self, final_cost_usd, billable=True, final_call=final_call)
         except BudgetExceeded:
             self._settled = True
             raise
@@ -127,8 +129,9 @@ class Budget:
         final_cost_usd: float | None,
         *,
         billable: bool,
+        final_call: Call | None = None,
     ) -> None:
-        call = reservation.call
+        call = final_call or reservation.call
         if final_cost_usd is not None and (not math.isfinite(final_cost_usd) or final_cost_usd < 0):
             raise ValueError("final cost must be finite and non-negative")
         async with self._lock:
