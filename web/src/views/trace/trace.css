@@ -1,0 +1,14 @@
+.trace-view { display:grid; gap:12px; }
+.trace-view > p { margin:0; color:var(--color-ink-muted); font-size:12px; }
+.trace-list { display:grid; gap:10px; margin:4px 0 0; padding:0; list-style:none; }
+.trace-step { padding:14px; border:1px solid var(--color-line); border-radius:var(--radius-md); background:var(--color-surface); }
+.trace-step-heading { display:flex; flex-wrap:wrap; justify-content:space-between; gap:8px; font-size:10px; }
+.trace-step-heading span { color:var(--color-ink-muted); }
+.trace-bar { display:flex; height:14px; margin-top:12px; overflow:hidden; border-radius:5px; background:var(--color-surface-raised); }
+.trace-segment { min-width:2px; }
+.trace-system { background:#7357c8; }.trace-tools { background:#248d89; }.trace-instructions { background:#d18d26; }.trace-files { background:#397bc2; }.trace-conversation { background:#bd557a; }
+.trace-legend { display:flex; flex-wrap:wrap; gap:6px 14px; margin-top:7px; color:var(--color-ink-muted); font-size:9px; }
+.trace-step details { margin-top:11px; font-size:10px; }
+.trace-step summary { cursor:pointer; color:var(--color-accent); }
+.trace-step dl { display:grid; grid-template-columns:minmax(110px,auto) 1fr; gap:5px 10px; }
+.trace-step dt { color:var(--color-ink-muted); }.trace-step dd { margin:0; overflow-wrap:anywhere; }

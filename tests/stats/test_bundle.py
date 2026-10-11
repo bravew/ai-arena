@@ -402,6 +402,50 @@ def test_cli_export_writes_the_bundle_and_refuses_to_overwrite(home: Path, tmp_p
     assert "already exists" in second.output
 
 
+def test_cli_static_export_embeds_run_bundle_and_events(
+    home: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    assets = tmp_path / "dist"
+    assets.mkdir()
+    (assets / "index.html").write_text(
+        '<html><body><script type="module" src="./app.js"></script></body></html>',
+        encoding="utf-8",
+    )
+    (assets / "app.js").write_text("", encoding="utf-8")
+    monkeypatch.setattr("arena.server.static.web_dist_path", lambda: assets)
+    out = tmp_path / "static-run"
+
+    result = CliRunner().invoke(
+        app,
+        ["export", "run-1", "--home", str(home), "--out", str(out), "--format", "static"],
+    )
+
+    assert result.exit_code == 0, result.output
+    index = (out / "index.html").read_text(encoding="utf-8")
+    payload = index.split('id="arena-static-data" type="application/json">', 1)[1].split(
+        "</script>", 1
+    )[0]
+    data = json.loads(payload)
+    assert data["input"]["run"]["id"] == "run-1"
+    assert len(data["events"]) == len((out / "events.jsonl").read_text().splitlines())
+
+
+def test_cli_static_export_reports_missing_viewer_assets(
+    home: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr("arena.server.static.web_dist_path", lambda: tmp_path / "missing")
+    out = tmp_path / "static-run"
+
+    result = CliRunner().invoke(
+        app,
+        ["export", "run-1", "--home", str(home), "--out", str(out), "--format", "static"],
+    )
+
+    assert result.exit_code == 1
+    assert "viewer assets are unavailable" in result.output
+    assert not out.exists()
+
+
 def test_cli_export_rejects_json_format_that_has_no_separate_output(
     home: Path, tmp_path: Path
 ) -> None:

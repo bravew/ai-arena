@@ -1,0 +1,5 @@
+.rundiff-view { display:grid; gap:12px; }
+.rundiff-view > p { margin:0; color:var(--color-ink-muted); font-size:12px; }
+.rundiff-single-run { display:flex; flex-wrap:wrap; gap:8px 16px; color:var(--color-ink-muted); font-size:11px; }
+.rundiff-single-run strong { color:var(--color-ink); }
+.rundiff-table { min-width:450px; }

@@ -84,6 +84,7 @@ def main(
 
 __import__("arena.cli_run")
 import_module("arena.cli_report")
+import_module("arena.cli_serve")
 
 app.add_typer(build_gateway_app(), name="gateway")
 app.add_typer(providers_app, name="providers")

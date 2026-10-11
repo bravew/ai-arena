@@ -1,0 +1,417 @@
+{
+  "bundle_version": 2,
+  "provenance": {
+    "origin": "native",
+    "verification": "verified",
+    "importer": null,
+    "importer_version": null,
+    "source_ref": null
+  },
+  "run": {
+    "id": "run-schema-001",
+    "suite_id": "smoke",
+    "started_at": "2026-10-08T10:00:00Z",
+    "ended_at": "2026-10-08T10:01:00Z",
+    "status": "succeeded"
+  },
+  "contestants": [
+    {
+      "id": "c-ablation-base",
+      "label": "OpenCode · no kit",
+      "model": "mock/echo",
+      "params": {},
+      "scaffold": {
+        "id": "opencode",
+        "version": "1.2.0",
+        "settings": {}
+      },
+      "scaffold_prompt": "native",
+      "kit_hash": "none",
+      "orchestration": "single",
+      "prompt_version": null,
+      "hooks": []
+    },
+    {
+      "id": "c-ablation-kit",
+      "label": "OpenCode · team-coding@3",
+      "model": "mock/echo",
+      "params": {},
+      "scaffold": {
+        "id": "opencode",
+        "version": "1.2.0",
+        "settings": {}
+      },
+      "scaffold_prompt": "native",
+      "kit_hash": "team-coding@3",
+      "orchestration": "single",
+      "prompt_version": null,
+      "hooks": []
+    },
+    {
+      "id": "c-subscription",
+      "label": "Claude Code · subscription",
+      "model": "anthropic/claude-opus-5-5",
+      "params": {},
+      "scaffold": {
+        "id": "claude-code",
+        "version": "2.4.1",
+        "settings": {}
+      },
+      "scaffold_prompt": "native",
+      "kit_hash": "none",
+      "orchestration": "single",
+      "prompt_version": null,
+      "hooks": []
+    }
+  ],
+  "trials": [
+    {
+      "id": "trial-base-1",
+      "run_id": "run-schema-001",
+      "contestant_id": "c-ablation-base",
+      "task_id": "smoke.echo",
+      "attempt": 1,
+      "status": "succeeded",
+      "error_class": null,
+      "flags": {
+        "unmetered": false,
+        "swapped": false,
+        "subscription_served": false,
+        "kit_unapplied": false
+      },
+      "started_at": "2026-10-08T10:00:01Z",
+      "ended_at": "2026-10-08T10:00:10Z"
+    },
+    {
+      "id": "trial-kit-1",
+      "run_id": "run-schema-001",
+      "contestant_id": "c-ablation-kit",
+      "task_id": "smoke.echo",
+      "attempt": 1,
+      "status": "succeeded",
+      "error_class": null,
+      "flags": {
+        "unmetered": false,
+        "swapped": false,
+        "subscription_served": false,
+        "kit_unapplied": false
+      },
+      "started_at": "2026-10-08T10:00:11Z",
+      "ended_at": "2026-10-08T10:00:20Z"
+    },
+    {
+      "id": "trial-base-2",
+      "run_id": "run-schema-001",
+      "contestant_id": "c-ablation-base",
+      "task_id": "smoke.echo",
+      "attempt": 2,
+      "status": "succeeded",
+      "error_class": null,
+      "flags": {
+        "unmetered": false,
+        "swapped": false,
+        "subscription_served": false,
+        "kit_unapplied": false
+      },
+      "started_at": "2026-10-08T10:00:01Z",
+      "ended_at": "2026-10-08T10:00:10Z"
+    },
+    {
+      "id": "trial-kit-2",
+      "run_id": "run-schema-001",
+      "contestant_id": "c-ablation-kit",
+      "task_id": "smoke.echo",
+      "attempt": 2,
+      "status": "succeeded",
+      "error_class": null,
+      "flags": {
+        "unmetered": false,
+        "swapped": false,
+        "subscription_served": false,
+        "kit_unapplied": false
+      },
+      "started_at": "2026-10-08T10:00:11Z",
+      "ended_at": "2026-10-08T10:00:20Z"
+    },
+    {
+      "id": "trial-sub",
+      "run_id": "run-schema-001",
+      "contestant_id": "c-subscription",
+      "task_id": "smoke.echo",
+      "attempt": 1,
+      "status": "succeeded",
+      "error_class": null,
+      "flags": {
+        "unmetered": false,
+        "swapped": false,
+        "subscription_served": true,
+        "kit_unapplied": false
+      },
+      "started_at": "2026-10-08T10:00:21Z",
+      "ended_at": "2026-10-08T10:00:30Z"
+    }
+  ],
+  "calls": [
+    {
+      "id": "call-sub",
+      "seq": 1,
+      "run_id": "run-schema-001",
+      "trial_id": "trial-sub",
+      "span_id": null,
+      "parent_span_id": null,
+      "purpose": "contestant",
+      "protocol_in": "anthropic",
+      "protocol_out": "anthropic",
+      "translated": false,
+      "provider": "anthropic-max",
+      "account_id": "acct-hash-01",
+      "model_asked": "claude-opus-5-5",
+      "model_served": "claude-opus-5-5",
+      "swapped": false,
+      "upstream": null,
+      "effort_asked": null,
+      "effort_applied": null,
+      "tries": [
+        {
+          "account_id": "acct-hash-01",
+          "status": 200,
+          "error_class": null,
+          "rest_ms": 0,
+          "ms": 812
+        }
+      ],
+      "status": 200,
+      "error_class": null,
+      "tokens": {
+        "in": 120,
+        "out": 32,
+        "reasoning": 0,
+        "cache_read": 0,
+        "cache_write": 0
+      },
+      "cost_usd": null,
+      "price_version": null,
+      "queue_ms": 0,
+      "ttft_ms": 310,
+      "first_text_ms": 320,
+      "total_ms": 812,
+      "cache": "off",
+      "prompt_parts": [
+        {
+          "kind": "conversation",
+          "tokens": 120
+        }
+      ]
+    }
+  ],
+  "scores": [
+    {
+      "trial_id": "trial-base-1",
+      "scorer_id": "smoke-output",
+      "scorer_version": "1",
+      "value": 0.6,
+      "normalized": 0.6,
+      "passed": true,
+      "rationale": "Expected output produced.",
+      "evidence": {
+        "artifact": "artifact-output"
+      }
+    },
+    {
+      "trial_id": "trial-kit-1",
+      "scorer_id": "smoke-output",
+      "scorer_version": "1",
+      "value": 0.75,
+      "normalized": 0.75,
+      "passed": true,
+      "rationale": "Expected output produced.",
+      "evidence": {
+        "artifact": "artifact-output"
+      }
+    },
+    {
+      "trial_id": "trial-base-2",
+      "scorer_id": "smoke-output",
+      "scorer_version": "1",
+      "value": 0.5,
+      "normalized": 0.5,
+      "passed": true,
+      "rationale": "Expected output produced.",
+      "evidence": {
+        "artifact": "artifact-output"
+      }
+    },
+    {
+      "trial_id": "trial-kit-2",
+      "scorer_id": "smoke-output",
+      "scorer_version": "1",
+      "value": 0.65,
+      "normalized": 0.65,
+      "passed": true,
+      "rationale": "Expected output produced.",
+      "evidence": {
+        "artifact": "artifact-output"
+      }
+    }
+  ],
+  "sessions": [
+    {
+      "id": "session-kit-1",
+      "trial_id": "trial-kit-1",
+      "parent_session_id": null,
+      "agent": "team-coding@3",
+      "native_session_id": "native-kit-001",
+      "started_at": "2026-10-08T10:00:11Z",
+      "ended_at": "2026-10-08T10:00:20Z",
+      "status": "succeeded",
+      "turns": [
+        {
+          "call_ids": [],
+          "tool_calls": [],
+          "skill_events": [
+            {
+              "kind": "listed",
+              "skill": "tdd-loop",
+              "kit_hash": "team-coding@3"
+            },
+            {
+              "kind": "loaded",
+              "skill": "tdd-loop",
+              "kit_hash": "team-coding@3"
+            }
+          ],
+          "mcp_calls": [],
+          "files": [],
+          "unmetered": false
+        },
+        {
+          "call_ids": [],
+          "tool_calls": [
+            {
+              "name": "run_tests",
+              "args_digest": "sha256:test-1",
+              "result_size": 32,
+              "duration_ms": 120,
+              "exit_status": 0
+            }
+          ],
+          "skill_events": [
+            {
+              "kind": "invoked",
+              "skill": "tdd-loop",
+              "kit_hash": "team-coding@3"
+            }
+          ],
+          "mcp_calls": [],
+          "files": [],
+          "unmetered": false
+        }
+      ]
+    },
+    {
+      "id": "session-kit-2",
+      "trial_id": "trial-kit-2",
+      "parent_session_id": null,
+      "agent": "team-coding@3",
+      "native_session_id": "native-kit-002",
+      "started_at": "2026-10-08T10:00:21Z",
+      "ended_at": null,
+      "status": "partial",
+      "turns": [
+        {
+          "call_ids": [],
+          "tool_calls": [],
+          "skill_events": [
+            {
+              "kind": "listed",
+              "skill": "tdd-loop",
+              "kit_hash": "team-coding@3"
+            },
+            {
+              "kind": "loaded",
+              "skill": "tdd-loop",
+              "kit_hash": "team-coding@3"
+            },
+            {
+              "kind": "invoked",
+              "skill": "tdd-loop",
+              "kit_hash": "team-coding@3"
+            }
+          ],
+          "mcp_calls": [],
+          "files": [],
+          "unmetered": false
+        }
+      ]
+    },
+    {
+      "id": "session-base-1",
+      "trial_id": "trial-base-1",
+      "parent_session_id": null,
+      "agent": "opencode",
+      "native_session_id": "native-base-001",
+      "started_at": "2026-10-08T10:00:01Z",
+      "ended_at": "2026-10-08T10:00:10Z",
+      "status": "succeeded",
+      "turns": [
+        {
+          "call_ids": [],
+          "tool_calls": [],
+          "skill_events": [],
+          "mcp_calls": [],
+          "files": [],
+          "unmetered": false
+        },
+        {
+          "call_ids": [],
+          "tool_calls": [
+            {
+              "name": "run_tests",
+              "args_digest": "sha256:test-2",
+              "result_size": 16,
+              "duration_ms": 140,
+              "exit_status": 0
+            }
+          ],
+          "skill_events": [],
+          "mcp_calls": [],
+          "files": [],
+          "unmetered": false
+        }
+      ]
+    }
+  ],
+  "kit_installs": [
+    {
+      "trial_id": "trial-kit-1",
+      "kit_hash": "team-coding@3",
+      "written": [
+        {
+          "path": ".config/opencode/skills/tdd-loop/SKILL.md",
+          "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        }
+      ],
+      "refused": []
+    },
+    {
+      "trial_id": "trial-kit-2",
+      "kit_hash": "team-coding@3",
+      "written": [
+        {
+          "path": ".config/opencode/skills/tdd-loop/SKILL.md",
+          "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        }
+      ],
+      "refused": []
+    }
+  ],
+  "artifacts": [
+    {
+      "trial_id": "trial-base-1",
+      "sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "path": "answer.txt",
+      "mime": "text/plain",
+      "render_hint": "code"
+    }
+  ]
+}
