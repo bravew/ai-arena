@@ -18,6 +18,7 @@ import ipaddress
 import json
 import re
 import socket
+import threading
 import time
 import urllib.error
 import urllib.request
@@ -76,6 +77,22 @@ class McpUpstream(Protocol):
 
 
 SpanSink = Callable[[McpSpan], None]
+
+
+class McpSpanLog:
+    """Thread-safe `SpanSink` that keeps spans so a session assembler can read them per trial."""
+
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self._spans: list[McpSpan] = []
+
+    def __call__(self, span: McpSpan) -> None:
+        with self._lock:
+            self._spans.append(span)
+
+    def for_trial(self, trial_id: str) -> tuple[McpSpan, ...]:
+        with self._lock:
+            return tuple(span for span in self._spans if span.trial_id == trial_id)
 
 
 @dataclass(frozen=True)

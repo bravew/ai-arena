@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+from collections.abc import Sequence
 from datetime import UTC, datetime
 from typing import Any, cast
 
@@ -17,6 +18,7 @@ from arena.core.models import (
     ToolCall,
     Turn,
 )
+from arena.gateway.mcp_proxy import McpSpan
 
 
 def assemble_session(
@@ -29,6 +31,7 @@ def assemble_session(
     kit_hash: str = "none",
     run_id: str = "",
     first_seq: int = 1,
+    mcp_spans: Sequence[McpSpan] = (),
 ) -> tuple[Session, tuple[RunEvent, ...]]:
     """Build turns and RunEvents from newline-delimited native transcript records.
 
@@ -36,6 +39,8 @@ def assemble_session(
     Records without a turn id belong to the current turn. Gateway calls are scoped
     to this trial and attached by explicit call id when present, otherwise in ledger
     order, one per native turn. A filesystem diff is attached to the final turn.
+    Gateway MCP spans for this trial are attached to the final turn too: the gateway saw the
+    request, so it is recorded even when the native transcript has no matching `mcp_call`.
     """
     records: list[dict[str, Any]] = []
     parse_failed = False
@@ -143,6 +148,15 @@ def assemble_session(
                 "unmetered": False,
             }
         )
+    trial_spans = [
+        McpCall(
+            server=span.server, tool=span.tool, duration_ms=span.duration_ms, status=span.status
+        )
+        for span in mcp_spans
+        if span.trial_id == trial_id
+    ]
+    if trial_spans:
+        turns[-1] = turns[-1].model_copy(update={"mcp_calls": [*turns[-1].mcp_calls, *trial_spans]})
     if filesystem_diff:
         turns[-1] = turns[-1].model_copy(update={"files": list(filesystem_diff)})
 

@@ -4,6 +4,7 @@ import json
 
 from arena.agents.sessions import assemble_session
 from arena.core.models import Call, FileTouched
+from arena.gateway.mcp_proxy import McpSpan, McpSpanLog
 
 
 def _call(call_id: str, *, trial_id: str = "trial-1") -> Call:
@@ -94,3 +95,26 @@ def test_unparseable_transcript_returns_partial_with_gateway_data() -> None:
     assert len(session.turns) == 1
     assert session.turns[0].call_ids == ["c1"]
     assert events[0].kind == "session_turn"
+
+
+def test_gateway_mcp_spans_for_this_trial_land_on_the_final_turn() -> None:
+    log = McpSpanLog()
+    log(McpSpan("trial-1", "docs", "search", 12, "ok"))
+    log(McpSpan("other-trial", "docs", "leak", 1, "ok"))
+    log(McpSpan("trial-1", "docs", "fetch", 30, "error"))
+
+    session, events = assemble_session(
+        None, trial_id="trial-1", agent="mock", mcp_spans=log.for_trial("trial-1")
+    )
+
+    seen = [(m.server, m.tool, m.duration_ms, m.status) for m in session.turns[-1].mcp_calls]
+    assert seen == [("docs", "search", 12, "ok"), ("docs", "fetch", 30, "error")]
+    assert events[0].data["turn"]["mcp_calls"][1]["status"] == "error"
+
+
+def test_spans_from_another_trial_are_never_attached() -> None:
+    session, _ = assemble_session(
+        None, trial_id="trial-1", agent="mock", mcp_spans=[McpSpan("other", "s", "t", 1, "ok")]
+    )
+
+    assert session.turns[-1].mcp_calls == []
