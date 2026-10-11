@@ -1,0 +1,4 @@
+{"type":"session","sessionID":"ses_mock_recorded_001"}
+{"type":"text","part":{"text":"{\"type\":\"skill_list\",\"skills\":[\"review\"]}"}}
+{"type":"tool_result","part":{"tool":"read","state":{"input":{"filePath":"/home/agent/.claude/skills/review/SKILL.md"}}}}
+{"type":"tool_use","part":{"tool":"skill","state":{"input":{"name":"review"}}}}
