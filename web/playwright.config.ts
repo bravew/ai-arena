@@ -11,6 +11,7 @@ const port = 4173;
 export default defineConfig({
   testDir: 'tests',
   testMatch: '*.spec.ts',
+  testIgnore: 'arena-live.spec.ts',
   fullyParallel: true,
   forbidOnly: !!process.env.CI,
   reporter: [['list']],

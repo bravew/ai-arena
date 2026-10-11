@@ -19,6 +19,7 @@ from urllib.parse import parse_qs, unquote, urlsplit
 from arena.core.bundle import BundleError, build_bundle, default_home, open_run
 from arena.core.bundle_contract import validate_events_jsonl
 from arena.core.store import Store
+from arena.server.votes import HumanVoteService, JsonlVoteStore
 
 _RUN_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,127}\Z")
 
@@ -39,6 +40,7 @@ def create_server(
     artifacts: bool = False,
     trusted_proxy: str | None = None,
     session_secret: bytes | None = None,
+    vote_service: HumanVoteService | None = None,
 ) -> ArenaHTTPServer:
     """Create a server instance; ``serve_forever`` starts it for real."""
     data_home = home or default_home()
@@ -109,6 +111,18 @@ def create_server(
                 and self.headers.get("X-Forwarded-Proto", "").lower() == "https"
             )
 
+        def is_cross_origin(self) -> bool:
+            """True when a browser's Origin names a different host:port than this request's Host.
+
+            A same-origin fetch from the viewer sends its own origin, so that must pass; a page on
+            another site cannot send a matching Host, and `SameSite=Strict` cookies stay unsent.
+            """
+            origin = self.headers.get("Origin")
+            if not origin:
+                return False
+            host = (self.headers.get("Host") or "").lower()
+            return not host or urlsplit(origin).netloc.lower() != host
+
         def do_GET(self) -> None:
             parsed = urlsplit(self.path)
             path = unquote(parsed.path)
@@ -135,6 +149,14 @@ def create_server(
             web_root = Path(__file__).resolve().parents[3] / "web" / "dist"
             relative = Path(path.lstrip("/") or "index.html")
             target = (web_root / relative).resolve()
+            if (
+                not relative.suffix
+                and not path.startswith("/api/")
+                and target.is_relative_to(web_root.resolve())
+                and not target.is_file()
+            ):
+                # A viewer route such as /vote: the app's router handles it, so a reload works.
+                target = web_root / "index.html"
             if not target.is_relative_to(web_root.resolve()) or not target.is_file():
                 self.send_json(404, {"error": "not found"})
                 return
@@ -158,7 +180,7 @@ def create_server(
                 if artifacts:
                     self.send_json(404, {"error": "not found"})
                     return
-                if self.headers.get("Origin"):
+                if self.is_cross_origin():
                     self.send_json(403, {"error": "cross-origin sign-in is refused"})
                     return
                 if not run_key:
@@ -194,7 +216,7 @@ def create_server(
                     },
                 )
                 return
-            if self.headers.get("Origin"):
+            if self.is_cross_origin():
                 self.send_json(403, {"error": "cross-origin writes are refused"})
                 return
             if off_box and not self.authenticated():
@@ -335,6 +357,16 @@ def create_server(
     route("GET", r"/api/runs", runs)
     route("GET", r"/api/runs/([A-Za-z0-9._-]+)/bundle", bundle)
     route("GET", r"/api/runs/([A-Za-z0-9._-]+)/events", events)
+    if not artifacts:
+        # Imported here because the vote routes import this module's server type.
+        from arena.server.vote_pairs import build_pairs
+        from arena.server.vote_routes import register_vote_routes
+
+        register_vote_routes(
+            server,
+            vote_service
+            or HumanVoteService(build_pairs(data_home), JsonlVoteStore(data_home / "votes.jsonl")),
+        )
     return server
 
 
