@@ -101,6 +101,7 @@ def main(
 import_module("arena.cli_report")
 import_module("arena.cli_judges")
 import_module("arena.cli_serve")
+import_module("arena.cli_votes")
 
 app.add_typer(build_gateway_app(), name="gateway")
 app.add_typer(providers_app, name="providers")
