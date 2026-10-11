@@ -8,3 +8,4 @@ scorers:
     gate: true
     must_include: ["<button", "<h1", "<script"]
 pairwise: true
+created_at: "2026-10-08"
