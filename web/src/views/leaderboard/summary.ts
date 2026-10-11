@@ -6,6 +6,7 @@ export interface ContestantSummary {
   confidenceInterval: { low: number; high: number } | null;
   passK: number | null;
   costPerTask: number | 'flat' | null;
+  serving: 'api' | 'subscription (gateway)' | 'subscription (local CLI)' | 'mixed serving' | 'not recorded';
   tokensPerTask: number | null;
   p50LatencyMs: number | null;
   scoreByTrial: Map<string, number>;
@@ -121,6 +122,13 @@ export function calculateSummaries(bundle: Bundle): ContestantSummary[] {
     const calls = bundle.calls.filter((call) => call.purpose === 'contestant' && call.trial_id && trials.some((trial) => trial.id === call.trial_id));
     const taskCount = new Set(trials.map((trial) => trial.task_id)).size;
     const costKnown = calls.filter((call) => call.cost_usd !== null);
+    const trialModes = new Set(trials.map((trial) => {
+      const trialCalls = calls.filter((call) => call.trial_id === trial.id);
+      if (trialCalls.some((call) => call.upstream === 'cli_reported')) return 'subscription (local CLI)';
+      if (trial.flags.subscription_served) return 'subscription (gateway)';
+      return trialCalls.length ? 'api' : 'not recorded';
+    }).filter((mode) => mode !== 'not recorded'));
+    const serving: ContestantSummary['serving'] = trialModes.size === 0 ? 'not recorded' : trialModes.size > 1 ? 'mixed serving' : [...trialModes][0] as ContestantSummary['serving'];
     const tokenCount = calls.reduce((sum, call) => sum + call.tokens.in + call.tokens.out + call.tokens.reasoning + call.tokens.cache_read + call.tokens.cache_write, 0);
     const durations = trials.flatMap((trial) => {
       if (!trial.started_at || !trial.ended_at) return [];
@@ -139,7 +147,8 @@ export function calculateSummaries(bundle: Bundle): ContestantSummary[] {
       meanScore: average,
       confidenceInterval: clusterBootstrapInterval(taskClusters(tasks), `${contestant.id}:score`),
       passK: passByTask.size ? [...passByTask.values()].filter((outcomes) => outcomes.length > 0 && outcomes.every(Boolean)).length / passByTask.size : null,
-      costPerTask: calls.length === 0 || taskCount === 0 ? null : costKnown.length === 0 ? 'flat' : costKnown.reduce((sum, call) => sum + (call.cost_usd ?? 0), 0) / taskCount,
+      serving,
+      costPerTask: calls.length === 0 || taskCount === 0 ? null : costKnown.length === 0 || serving.includes('subscription') || serving === 'mixed serving' ? 'flat' : costKnown.reduce((sum, call) => sum + (call.cost_usd ?? 0), 0) / taskCount,
       tokensPerTask: taskCount === 0 || calls.length === 0 ? null : tokenCount / taskCount,
       p50LatencyMs: quantile(durations, 0.5),
       scoreByTrial: scores,
