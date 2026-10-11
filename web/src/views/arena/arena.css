@@ -1,0 +1,20 @@
+.arena-view { display: grid; gap: 16px; }
+.arena-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
+.arena-heading h2 { margin: 5px 0; font-size: 18px; letter-spacing: -.03em; }
+.arena-heading p { margin: 0; color: var(--color-ink-muted); font-size: 11px; }
+.arena-context { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; color: var(--color-ink-muted); font-size: 11px; }
+.arena-context strong { color: var(--color-ink); }
+.arena-pairs { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+.arena-submission { min-width: 0; padding: 14px; border: 1px solid var(--color-line); border-radius: var(--radius-sm); background: var(--color-surface); }
+.arena-submission h3, .arena-reveal h3, .arena-leaderboard h3 { margin: 0 0 10px; font-size: 13px; }
+.arena-submission pre { margin: 0; overflow-wrap: anywhere; white-space: pre-wrap; font: inherit; font-size: 12px; }
+.arena-choices { display: flex; flex-wrap: wrap; gap: 8px; }
+.arena-choices button, .arena-view > button, .arena-view button { min-height: 36px; padding: 0 12px; border: 1px solid var(--color-line); border-radius: var(--radius-sm); color: var(--color-ink); background: var(--color-surface); cursor: pointer; }
+.arena-choices button:hover, .arena-view button:hover { background: var(--color-surface-raised); }
+.arena-choices kbd { margin-left: 8px; color: var(--color-ink-muted); }
+.arena-reveal, .arena-leaderboard { padding: 14px; border: 1px solid var(--color-line); border-radius: var(--radius-sm); }
+.arena-reveal p { margin: 6px 0; font-size: 11px; }
+.arena-leaderboard ol { display: grid; gap: 8px; margin: 0; padding-left: 20px; }
+.arena-leaderboard li { display: flex; flex-wrap: wrap; gap: 10px; align-items: baseline; font-size: 11px; }
+.arena-leaderboard small { color: var(--color-ink-muted); }
+@media (max-width: 620px) { .arena-pairs { grid-template-columns: 1fr; } }
