@@ -545,3 +545,68 @@ def test_http_transport_reports_an_unreachable_endpoint() -> None:
         url = seen["url"]
     with pytest.raises(JudgeTransportError, match="cannot reach"):
         HttpJudgeTransport(url, protocol="openai", timeout=2).complete(request())
+
+
+@contextmanager
+def redirecting_endpoint() -> Iterator[tuple[str, list[tuple[str, str | None]]]]:
+    """A judge endpoint that redirects, in front of a target that records every request.
+
+    The target answers GET and POST with a valid reply, because `urlopen` rewrites a redirected
+    POST into a GET. A transport that follows the redirect therefore completes successfully
+    against a host the run never named, and the recorded hits show the token reaching it.
+    """
+    hits: list[tuple[str, str | None]] = []
+    reply = json.dumps(
+        {
+            "model": "judge-x",
+            "choices": [{"message": {"role": "assistant", "content": "the verdict"}}],
+            "usage": {"prompt_tokens": 1, "completion_tokens": 1},
+        }
+    ).encode()
+
+    def handler(redirect_to: int | None) -> type[BaseHTTPRequestHandler]:
+        class Handler(BaseHTTPRequestHandler):
+            def _handle(self) -> None:
+                hits.append((self.path, self.headers.get("Authorization")))
+                if redirect_to is None:
+                    self.send_response(200)
+                    body = reply
+                else:
+                    self.send_response(302)
+                    self.send_header("Location", f"http://127.0.0.1:{redirect_to}/steal")
+                    body = b"{}"
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+
+            do_GET = _handle
+            do_POST = _handle
+
+            def log_message(self, format: str, *args: Any) -> None:
+                pass
+
+        return Handler
+
+    target = ThreadingHTTPServer(("127.0.0.1", 0), handler(None))
+    origin = ThreadingHTTPServer(("127.0.0.1", 0), handler(target.server_address[1]))
+    for server in (target, origin):
+        threading.Thread(target=server.serve_forever, daemon=True).start()
+    try:
+        yield f"http://127.0.0.1:{origin.server_address[1]}", hits
+    finally:
+        for server in (target, origin):
+            server.shutdown()
+            server.server_close()
+
+
+def test_http_transport_never_sends_the_judge_token_to_a_redirect_target() -> None:
+    """The bearer token names the run; a redirect must not hand it to a host the run never named."""
+    with (
+        redirecting_endpoint() as (url, hits),
+        pytest.raises(JudgeTransportError, match="HTTP 302"),
+    ):
+        HttpJudgeTransport(url, protocol="openai", timeout=5).complete(request())
+
+    assert [path for path, _ in hits] == ["/v1/chat/completions"]
+    assert hits[0][1] == "Bearer arena-judge-run-9"

@@ -20,10 +20,14 @@ from typing import Any
 from urllib.parse import urlsplit
 
 from arena.core.models import Call
+from arena.core.net import no_redirect_opener
 from arena.gateway.redact import scrub, scrub_json
 from arena.obs.metrics import Metrics
 
 logger = logging.getLogger("arena.obs.otel")
+
+# A collector credential in `config.headers` must not follow a redirect to another host.
+_OPENER = no_redirect_opener()
 
 
 def _safe(value: str | None) -> str | None:
@@ -357,7 +361,7 @@ class OtlpExporter:
             method="POST",
         )
         try:
-            with urllib.request.urlopen(request, timeout=self.config.export_timeout) as response:
+            with _OPENER.open(request, timeout=self.config.export_timeout) as response:
                 if response.status < 200 or response.status >= 300:
                     raise RuntimeError(f"collector returned HTTP {response.status}")
                 response.read(4096)

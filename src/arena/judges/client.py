@@ -16,6 +16,7 @@ from typing import Any, Literal, Protocol, cast
 from pydantic import Field
 
 from arena.core.models import Frozen
+from arena.core.net import no_redirect_opener
 from arena.scorers.base import ScorerError
 
 JUDGE_PURPOSE = "judge"
@@ -97,7 +98,7 @@ class HttpJudgeTransport:
         self.base_url = base_url.rstrip("/")
         self.protocol = protocol
         self.timeout = timeout
-        self._opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+        self._opener = no_redirect_opener(urllib.request.ProxyHandler({}))
 
     def complete(self, request: JudgeRequest) -> JudgeReply:
         path, body = self._encode(request)

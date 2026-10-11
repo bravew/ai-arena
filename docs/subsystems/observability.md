@@ -21,6 +21,8 @@ This reference follows the subsystem design in the development plan. Implementat
 
 A full OTLP queue drops telemetry and increments its dropped counter without slowing requests. A truncated transcript yields a partial session. Long-poll clients resume from a sequence cursor rather than assuming an empty event stream.
 
+- The OTLP exporter refuses every redirect. `urllib.request.urlopen` follows 301, 302 and 303 and re-sends the caller's headers, so a collector that answered with a redirect would receive the configured collector credential at whatever host it named. The export fails and counts as failed instead ([`no_redirect_opener`](../../src/arena/core/net.py)).
+
 - This branch does not yet contain the subsystem implementation or its tests. Future source paths are described in the plan and are not linked as existing files.
 - Keep source links on stable headings or symbols; do not use line-number links.
 

@@ -93,6 +93,61 @@ def collector() -> Iterator[FakeCollector]:
         fake.close()
 
 
+class RedirectingCollector:
+    """An OTLP endpoint that answers every post with a redirect to a second loopback server.
+
+    The target answers both GET and POST, because `urlopen` rewrites a redirected POST into a GET.
+    It records every request it receives, so a followed redirect is visible as a second hit.
+    """
+
+    def __init__(self) -> None:
+        self.hits: list[tuple[str, str | None]] = []
+        self._servers: list[ThreadingHTTPServer] = []
+        target = self._serve(redirect_to=None)
+        origin = self._serve(redirect_to=target)
+        self.endpoint = f"http://127.0.0.1:{origin}/v1/traces"
+
+    def _serve(self, redirect_to: int | None) -> int:
+        collector = self
+
+        class Handler(BaseHTTPRequestHandler):
+            def _handle(self) -> None:
+                collector.hits.append((self.path, self.headers.get("Authorization")))
+                if redirect_to is None:
+                    self.send_response(200)
+                else:
+                    self.send_response(302)
+                    self.send_header("Location", f"http://127.0.0.1:{redirect_to}/steal")
+                self.end_headers()
+                self.wfile.write(b"{}")
+
+            do_GET = _handle
+            do_POST = _handle
+
+            def log_message(self, format: str, *args: Any) -> None:
+                pass
+
+        server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+        server.daemon_threads = True
+        threading.Thread(target=server.serve_forever, daemon=True).start()
+        self._servers.append(server)
+        return server.server_address[1]
+
+    def close(self) -> None:
+        for server in self._servers:
+            server.shutdown()
+            server.server_close()
+
+
+@pytest.fixture
+def redirecting_collector() -> Iterator[RedirectingCollector]:
+    fake = RedirectingCollector()
+    try:
+        yield fake
+    finally:
+        fake.close()
+
+
 def _call(index: int = 1, **update: Any) -> Call:
     call = Call(
         id=f"call-{index}",
@@ -281,6 +336,32 @@ def test_config_rejects_non_http_endpoints(endpoint: str) -> None:
 def test_headers_are_not_in_the_config_repr() -> None:
     config = OtlpConfig(endpoint="http://127.0.0.1:1/v1/traces", headers={"authorization": SECRET})
     assert SECRET not in repr(config)
+
+
+def test_a_redirecting_collector_never_receives_the_configured_credential(
+    redirecting_collector: RedirectingCollector,
+) -> None:
+    """`urlopen` re-sends headers across a 302; the exporter must refuse the redirect instead.
+
+    A collector that redirects would otherwise hand the configured collector credential to a host
+    the operator never named. The export fails; the credential reaches only the origin once.
+    """
+    exporter = OtlpExporter(
+        OtlpConfig(
+            endpoint=redirecting_collector.endpoint,
+            headers={"Authorization": "Bearer collector-secret"},
+            export_timeout=5,
+        )
+    ).start()
+    exporter.submit_call(_call())
+    assert exporter.flush(timeout=10)
+    exporter.close()
+
+    assert exporter.stats().failed == 1
+    assert exporter.stats().exported == 0
+    hosts = [path for path, _ in redirecting_collector.hits]
+    assert hosts == ["/v1/traces"]  # the redirect target was never contacted
+    assert redirecting_collector.hits[0][1] == "Bearer collector-secret"
 
 
 def test_bodies_are_off_by_default_and_redacted_when_on(collector: FakeCollector) -> None:
