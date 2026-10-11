@@ -230,20 +230,20 @@ uv run pytest tests/judges/test_pairwise.py
 | Gold set | Load validated pairwise judgments from a JSONL file or a directory containing `pair_judgments.jsonl`; malformed or unreadable input is an error. | [`load_gold_set`, `PairJudgment`](../../src/arena/judges/calibration_report.py) |
 | Calibration status | Report agreement with human labels, Cohen's κ, order-swap position-bias rate, length-score correlation, and self-preference when evidence exists. A judge is uncalibrated when κ is unavailable or below the configured threshold. | [`build_reports`, `JudgeStatus`](../../src/arena/judges/calibration_report.py); [`calibration_report`](../../src/arena/stats/judge_calibration.py) |
 | Disagreement ranking | List labeled disagreements, ranking opposite A/B verdicts above tie-versus-side disagreements. | [`disagreements`](../../src/arena/judges/calibration_report.py) |
-| CLI | `arena judges report <gold-set>` prints the metrics and disagreement list; `--judge`, `--threshold`, and `--disagreements` filter the report. | [`report`](../../src/arena/cli_judges.py) |
+| CLI | `arena judges report <gold-set>` prints metrics and ranked disagreements; `--judge`, `--threshold`, and `--disagreements` filter output. `--json` exports the threshold, full computed metrics/status, and ranked disagreement rows. | [`report`](../../src/arena/cli_judges.py) |
 
 ### Runtime path
 
 1. `arena judges report` loads the JSONL gold set and validates each row, including verdicts and non-negative finite answer lengths.
 2. It builds one calibration report per judge. Metrics without enough evidence print as `n/a`; missing κ makes the judge uncalibrated.
-3. It prints the largest labeled judge/human disagreements, with opposite verdicts first. `--judge` limits both sections to one known judge.
+3. It prints the largest labeled judge/human disagreements, with opposite verdicts first. `--judge` limits both sections to one known judge. `--json` emits the same computed metrics and ranked rows as JSON for the browser view.
 
 ### Constraints and failure behavior
 
 - κ is the calibration gate; the default threshold is `0.6` and can be changed with `--threshold` in the inclusive range `[0, 1]`.
 - Position bias and length correlation are diagnostic metrics and do not change calibrated status.
 - Missing, empty, unreadable, or malformed gold sets and unknown judge filters exit with status 1 and an error message. Unavailable metrics remain `n/a`, never zero.
-- This report is a CLI capability; the judge report and disagreement browser view is not wired into the viewer on this branch yet.
+- Invalid CLI inputs exit with status 1 and an error on stderr in both output modes; JSON mode does not mix text into the report. The standalone `JudgesView` validates the JSON shape and metric ranges, reports parse/shape errors, shows calibration badges and an uncalibrated warning, and filters ranked disagreements by judge. Its proof entry is `web/src/views/judges/test-entry.html`; browser tests open `/src/views/judges/test-entry.html` in a temporary CP6 shell copy. This test harness is not connected to application navigation on this branch because the CP6 viewer shell is on a separate dependency branch.
 
 ### Verification
 

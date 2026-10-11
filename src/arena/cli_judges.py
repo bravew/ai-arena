@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import json
+from dataclasses import asdict
 from pathlib import Path
 from typing import Annotated
 
@@ -29,6 +31,7 @@ def report(
     disagreement_limit: Annotated[
         int, typer.Option("--disagreements", help="List this many largest disagreements.")
     ] = 10,
+    json_output: Annotated[bool, typer.Option("--json", help="Write the report as JSON.")] = False,
 ) -> None:
     """Print judge calibration metrics and the largest judge/human disagreements."""
     try:
@@ -41,6 +44,31 @@ def report(
         reports = build_reports(rows, threshold=threshold)
         if judge is not None:
             reports = tuple(item for item in reports if item.calibration.judge_id == judge)
+        judge_ids = (judge,) if judge is not None else tuple(sorted(available))
+        ranked_disagreements = [
+            {
+                "judge_id": judge_id,
+                **asdict(row),
+            }
+            for judge_id in judge_ids
+            for row in disagreements(rows, judge_id=judge_id, limit=disagreement_limit)
+        ]
+        if json_output:
+            typer.echo(
+                json.dumps(
+                    {
+                        "threshold": threshold,
+                        "judges": [
+                            {**asdict(item.calibration), "status": item.status.value}
+                            for item in reports
+                        ],
+                        "disagreements": ranked_disagreements,
+                    },
+                    indent=2,
+                    sort_keys=True,
+                )
+            )
+            return
         typer.echo("judge judgments labeled kappa position_bias length_corr self_pref status")
         for item in reports:
             value = item.calibration
@@ -50,14 +78,12 @@ def report(
                 f"{_fmt(value.length_correlation)} {_fmt(value.self_preference_rate)} {item.status}"
             )
         if disagreement_limit:
-            judge_ids = (judge,) if judge is not None else tuple(sorted(available))
             typer.echo("\nLargest judge/human disagreements")
-            for judge_id in judge_ids:
-                for row in disagreements(rows, judge_id=judge_id, limit=disagreement_limit):
-                    typer.echo(
-                        f"{judge_id} {row.item_id}: judge={row.judge_verdict} "
-                        f"human={row.human_verdict} severity={row.severity}"
-                    )
+            for row in ranked_disagreements:
+                typer.echo(
+                    f"{row['judge_id']} {row['item_id']}: judge={row['judge_verdict']} "
+                    f"human={row['human_verdict']} severity={row['severity']}"
+                )
     except (GoldSetError, ValueError) as error:
         typer.echo(str(error), err=True)
         raise typer.Exit(code=1) from error

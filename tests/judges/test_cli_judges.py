@@ -25,6 +25,27 @@ def _judgment(item: str, verdict: str | None, human: str | None, judge: str = "j
     )
 
 
+def test_json_report_exports_source_metrics_status_and_ranked_disagreements() -> None:
+    import json
+
+    result = CliRunner().invoke(app, ["judges", "report", str(GOLD), "--json"])
+
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.stdout)
+    assert payload["threshold"] == 0.6
+    reports = {item["judge_id"]: item for item in payload["judges"]}
+    assert reports["judge-good"]["status"] == "calibrated"
+    assert reports["judge-biased"]["status"] == "UNCALIBRATED"
+    assert reports["judge-good"]["cohens_kappa"] == pytest.approx(0.8666666666666666)
+    assert {
+        "human_verdict": "a",
+        "item_id": "i09",
+        "judge_id": "judge-good",
+        "judge_verdict": "b",
+        "severity": 2,
+    } in payload["disagreements"]
+
+
 def test_report_prints_kappa_position_bias_and_length_correlation() -> None:
     result = CliRunner().invoke(app, ["judges", "report", str(GOLD)])
 
