@@ -1,9 +1,23 @@
 import { useEffect, useState } from 'react';
+import { createHttpOpsSource, fetchOpsSnapshot } from './http-source';
 import type { Call } from '../../lib/schema';
 import { fixtureOps, type OpsDataSource, type UsagePoint } from './fixtures';
 import './ops.css';
 
-export function OpsView({ source = fixtureOps }: { source?: OpsDataSource }) {
+export function OpsView({ source: suppliedSource }: { source?: OpsDataSource }) {
+  const [liveSnapshot, setLiveSnapshot] = useState<Awaited<ReturnType<typeof fetchOpsSnapshot>>>();
+  const [loadError, setLoadError] = useState('');
+  useEffect(() => {
+    if (suppliedSource) return;
+    let active = true;
+    void fetchOpsSnapshot().then((snapshot) => {
+      if (active) setLiveSnapshot(snapshot);
+    }).catch((error: unknown) => {
+      if (active) setLoadError(error instanceof Error ? error.message : 'loading Ops data failed');
+    });
+    return () => { active = false; };
+  }, [suppliedSource]);
+  const source = suppliedSource ?? (liveSnapshot ? createHttpOpsSource(liveSnapshot) : fixtureOps);
   const [provider, setProvider] = useState('');
   const [status, setStatus] = useState('');
   const [statusMenuOpen, setStatusMenuOpen] = useState(false);
@@ -25,6 +39,12 @@ export function OpsView({ source = fixtureOps }: { source?: OpsDataSource }) {
   };
 
   return <div className="ops-view">
+    {loadError && <p className="ops-error" role="alert">{loadError}. Showing fixture data.</p>}
+    {liveSnapshot && <div className="ops-source-note" aria-label="Data sources">
+      {Object.entries(liveSnapshot.sources).map(([key, value]) => <span key={key}><strong>{key}:</strong> {value}</span>)}
+      <span><strong>Provider accounts:</strong> {liveSnapshot.accounts.length} redacted sign-ins</span>
+      {liveSnapshot.providers.map((item) => <span key={item.runtime}><strong>{item.runtime}:</strong> {item.status} · {item.auth}{item.version ? ` · ${item.version}` : ''}{item.hint ? ` · ${item.hint}` : ''}</span>)}
+    </div>}
     <section className="panel ops-panel" aria-labelledby="ops-ledger-title">
       <div className="ops-heading"><div><div className="eyebrow">GATEWAY · CALLS</div><h2 id="ops-ledger-title">Calls ledger</h2><p>Per-call attribution, token use, status and latency.</p></div><span className="count-pill">{filtered.length} / {calls.length} calls</span></div>
       <div className="ops-filters">
@@ -39,7 +59,7 @@ export function OpsView({ source = fixtureOps }: { source?: OpsDataSource }) {
       <article className="panel ops-panel"><div className="ops-heading"><div><div className="eyebrow">CAPACITY</div><h2>Provider lanes</h2></div></div><div className="lane-list">{Object.entries(lanes).map(([name, lane]) => <div className="lane-row" key={name}><div className="lane-top"><strong>{name}</strong>{lane.resting_until !== null && lane.resting_until > nowSeconds ? <span className="status-chip status-danger">Rest · {lane.rest_class} · {resetsIn(lane.resting_until)}</span> : <span className="status-chip status-success">Ready</span>}</div><div className="lane-meter" role="meter" aria-label={`${name} in flight`} aria-valuemin={0} aria-valuemax={lane.concurrency} aria-valuenow={lane.in_flight}><i style={{ width: `${Math.min(100, 100 * lane.in_flight / Math.max(1, lane.concurrency))}%` }} /></div><small>{lane.in_flight} in-flight / {lane.concurrency} limit <span>·</span> {lane.queued} queued</small></div>)}</div></article>
     </section>
     <section className="ops-grid">
-      <article className="panel ops-panel"><div className="ops-heading"><div><div className="eyebrow">ACCOUNT QUOTAS</div><h2>Subscription meters</h2></div></div><div className="meter-list">{source.meters().map((meter) => { const resets = Math.max(0, new Date(meter.resetsAt).getTime() - now); return <div className="meter-row" key={`${meter.account}-${meter.model}`}><div className="lane-top"><strong>{meter.label}</strong><span>{meter.account}</span></div><small>{meter.model} · {Math.ceil(resets / 86_400_000)}d {Math.floor(resets % 86_400_000 / 3_600_000)}h until reset</small><div className="lane-meter" role="meter" aria-label={`${meter.label} usage`} aria-valuemin={0} aria-valuemax={meter.limit} aria-valuenow={meter.used}><i style={{ width: `${Math.min(100, 100 * meter.used / Math.max(1, meter.limit))}%` }} /></div><small>{meter.used.toLocaleString()} / {meter.limit.toLocaleString()} tokens</small></div>; })}</div></article>
+      <article className="panel ops-panel"><div className="ops-heading"><div><div className="eyebrow">ACCOUNT QUOTAS</div><h2>Subscription meters</h2></div></div><div className="meter-list">{source.meters().map((meter) => { const resets = meter.resetsAt ? Math.max(0, new Date(meter.resetsAt).getTime() - now) : 0; return <div className="meter-row" key={`${meter.account}-${meter.model}`}><div className="lane-top"><strong>{meter.label}</strong><span>{meter.account}</span></div><small>{meter.model}{meter.resetsAt ? ` · ${Math.ceil(resets / 86_400_000)}d ${Math.floor(resets % 86_400_000 / 3_600_000)}h until reset` : ''}</small>{meter.limit !== null && <div className="lane-meter" role="meter" aria-label={`${meter.label} usage`} aria-valuemin={0} aria-valuemax={meter.limit} aria-valuenow={meter.used}><i style={{ width: `${Math.min(100, 100 * meter.used / Math.max(1, meter.limit))}%` }} /></div>}<small>{meter.used.toLocaleString()} tokens{meter.limit !== null ? ` / ${meter.limit.toLocaleString()} tokens` : ''}{meter.source ? ` · ${meter.source}` : ''}</small></div>; })}</div></article>
       <article className="panel ops-panel"><div className="ops-heading"><div><div className="eyebrow">FAIL-CLOSED CALLABLES</div><h2>Hook stats</h2></div></div><div className="table-wrap"><table className="ops-table" aria-label="Hook stats"><thead><tr><th>Hook</th><th>Calls</th><th>Failures</th><th>Average</th></tr></thead><tbody>{source.hooks().map((hook) => <tr key={hook.hook}><td className="mono">{hook.hook}</td><td>{hook.calls}</td><td>{hook.failures}</td><td>{hook.averageUs.toFixed(0)} µs</td></tr>)}</tbody></table></div></article>
     </section>
   </div>;

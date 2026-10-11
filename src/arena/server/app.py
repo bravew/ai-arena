@@ -19,6 +19,7 @@ from urllib.parse import parse_qs, unquote, urlsplit
 from arena.core.bundle import BundleError, build_bundle, default_home, open_run
 from arena.core.bundle_contract import validate_events_jsonl
 from arena.core.store import Store
+from arena.providers.runtimes import RuntimeReport
 from arena.server.votes import HumanVoteService, JsonlVoteStore
 
 _RUN_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,127}\Z")
@@ -41,6 +42,7 @@ def create_server(
     trusted_proxy: str | None = None,
     session_secret: bytes | None = None,
     vote_service: HumanVoteService | None = None,
+    ops_detect: Callable[[], list[RuntimeReport]] | None = None,
 ) -> ArenaHTTPServer:
     """Create a server instance; ``serve_forever`` starts it for real."""
     data_home = home or default_home()
@@ -358,10 +360,12 @@ def create_server(
     route("GET", r"/api/runs/([A-Za-z0-9._-]+)/bundle", bundle)
     route("GET", r"/api/runs/([A-Za-z0-9._-]+)/events", events)
     if not artifacts:
-        # Imported here because the vote routes import this module's server type.
+        # Imported here because vote routes import this module's server type.
+        from arena.server.ops import register_ops_routes
         from arena.server.vote_pairs import build_pairs
         from arena.server.vote_routes import register_vote_routes
 
+        register_ops_routes(server, data_home, detect=ops_detect)
         register_vote_routes(
             server,
             vote_service

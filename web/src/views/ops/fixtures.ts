@@ -9,7 +9,7 @@ export interface LaneStatus {
 }
 
 export interface UsagePoint { label: string; tokens: number; latencyMs: number }
-export interface SubscriptionMeter { account: string; model: string; label: string; used: number; limit: number; resetsAt: string }
+export interface SubscriptionMeter { account: string; model: string; label: string; used: number; limit: number | null; resetsAt: string | null; source?: string }
 export interface HookStat { hook: string; calls: number; failures: number; averageUs: number }
 
 export interface OpsDataSource {
