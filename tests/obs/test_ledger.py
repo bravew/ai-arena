@@ -184,6 +184,21 @@ def test_budget_reserves_remaining_cap_before_metered_dispatch(tmp_path: Path) -
         assert budget.metered_spend_usd == 10.0
         assert budget.report().remaining_usd == 10.0
 
+        exact_cap = await budget.check_call(
+            _call(call_id="c3").model_copy(update={"cost_usd": 0.0}),
+            events,
+            reserve_remaining=True,
+        )
+        await exact_cap.settle(10.0)
+        assert budget.metered_spend_usd == 20.0
+        assert budget.report().remaining_usd == 0.0
+        with pytest.raises(BudgetExceeded, match="budget is exhausted"):
+            await budget.check_call(
+                _call(call_id="c4").model_copy(update={"cost_usd": 0.0}),
+                events,
+                reserve_remaining=True,
+            )
+
     asyncio.run(run())
 
 
