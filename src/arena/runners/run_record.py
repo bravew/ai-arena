@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import os
 import tempfile
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
 from contextlib import suppress
 from datetime import UTC, datetime
 from pathlib import Path
@@ -51,6 +51,10 @@ class RunRecorder:
         self._events.append(
             RunEvent(seq=1, ts=self._clock(), run_id=self.run_id, kind=kind, ref=ref, data=data)
         )
+
+    def adopt(self, events: Iterable[RunEvent]) -> None:
+        """Take events another writer produced in this process. `write` renumbers them."""
+        self._events.extend(events)
 
     def write(self, home: Path) -> Path:
         path = events_path(home, self.run_id)
