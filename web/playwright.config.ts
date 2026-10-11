@@ -1,10 +1,12 @@
 import { defineConfig, devices } from '@playwright/test';
+import { fileURLToPath } from 'node:url';
 import { setupRealBrowserCache, installTempHome } from './tests/testenv/env';
 
 // Browsers live in the user's cache, outside any agent config. Point at it explicitly before HOME
 // moves, then run everything (including the browsers) under a temporary HOME.
 setupRealBrowserCache();
 installTempHome();
+process.env.ARENA_REPO ??= fileURLToPath(new URL('../', import.meta.url));
 
 const port = 4173;
 

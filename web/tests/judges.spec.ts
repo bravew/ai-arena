@@ -3,7 +3,7 @@ import { spawnSync } from 'node:child_process';
 
 test('judges view uploads a CLI report, filters judges and explains calibration', async ({ page }) => {
   const repo = process.env.ARENA_REPO;
-  if (!repo) throw new Error('Set ARENA_REPO to the AI Arena worktree for a source-derived report.');
+  if (!repo) throw new Error('Playwright config must set ARENA_REPO to this worktree.');
   const cli = spawnSync('uv', ['run', 'arena', 'judges', 'report', 'fixtures/gold', '--json'], {
     cwd: repo,
     encoding: 'utf8',

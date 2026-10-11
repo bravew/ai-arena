@@ -19,7 +19,13 @@ import { JudgesView } from '../views/judges/JudgesView';
 import { ArenaView } from '../views/arena/ArenaView';
 import { createHttpArenaSource } from '../views/arena/http-source';
 
-const arenaSource = createHttpArenaSource();
+declare global {
+  interface Window {
+    __arenaDataSource?: import('../views/arena/arena-data').ArenaDataSource;
+  }
+}
+
+const arenaSource = window.__arenaDataSource ?? createHttpArenaSource();
 
 function CompareRoute() { const { bundle } = useBundleState(); return bundle ? <CompareView bundle={bundle} /> : <PlaceholderPage title="Compare trials" />; }
 function TraceRoute() { const { bundle } = useBundleState(); return bundle ? <TraceView bundle={bundle} /> : <PlaceholderPage title="Trace" />; }
