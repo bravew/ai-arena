@@ -98,6 +98,8 @@ def resolve_target(text: str, providers: ProviderConfig, catalog: ModelCatalog) 
 
 def _not_served_reason(provider: Provider, model: CatalogModel) -> str | None:
     """Why `provider` can't serve `model`, or None when it can."""
+    if provider.subscription is not None and provider.subscription.runtime == "local-cli":
+        return "its subscription runs through the vendor's own CLI, not the gateway"
     extra: dict[str, Any] = provider.model_extra or {}
     apis = extra.get("apis")
     protocols = (model.model_extra or {}).get("protocols")
