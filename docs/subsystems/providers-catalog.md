@@ -6,6 +6,7 @@
 | --- | --- | --- |
 | Provider configuration | Load provider endpoints, environment key references, subscription declarations, and enabled state; reject literal credential values | [`arena.providers.config`](../../src/arena/providers/config.py) |
 | Model catalog | Validate model refs and require explicit token pricing or subscription pricing; subscription price remains unknown; distinguish disabled providers during model resolution | [`arena.catalog.config`](../../src/arena/catalog/config.py) |
+| Model discovery | List a provider's models (the Codex CLI list for a `local-cli` subscription, the provider's model-list endpoint for an API provider) and propose catalog entries | [`arena.providers.models_probe`](../../src/arena/providers/models_probe.py) |
 | Config validation CLI | Walk supplied files and directories, report all source paths, and exit non-zero for invalid configuration | [`validate`](../../src/arena/cli.py) |
 
 ## Runtime path
@@ -15,6 +16,14 @@
 2. `parse_yaml` loads each document using PyYAML's safe loader and rejects empty files.
 3. Provider files are validated as `ProviderConfig`; model catalog files are validated as `ModelCatalog`.
 4. Validation issues include the filename and model path and are printed together before the command exits non-zero.
+
+### Model discovery
+
+`arena providers models <provider> [--catalog FILE] [--write]` lists the provider's models, marks each `new` or `in catalog`, and prints proposed entries. It sends no model request.
+
+- A `local-cli` ChatGPT subscription asks `codex debug models` under an empty `CODEX_HOME` and keeps only `visibility: list` entries. The Claude CLI has no list command that was checked, and a `gateway` subscription has none, so both report that models must be named in the catalog by hand.
+- An API provider calls its model-list route with the provider's first key from the environment: `{base}/models` with a bearer token for `responses` and `chat`, `{base}/v1/models` with `x-api-key` for `anthropic`. An unset variable, an HTTP error or an unexpected body is an error that never includes the key.
+- A proposal never has a price. The catalog rejects a model with neither `price_per_mtok` nor `pricing: subscription`, so `--write` appends only subscription entries (and restores the file if it no longer validates). A paid model is printed with its price and source as comments to fill in from the vendor's price page.
 
 ## Constraints and failure behavior
 
@@ -29,6 +38,6 @@
 ## Verification
 
 ```sh
-uv run pytest tests/core/test_config.py
+uv run pytest tests/core/test_config.py tests/providers/test_models_probe.py
 uv run arena validate providers.yaml catalog/
 ```

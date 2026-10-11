@@ -280,6 +280,34 @@ def detect_all(
     return [detect_runtime(spec, environ, probe=probe, find=find) for spec in SPECS]
 
 
+def read_codex_models(
+    binary: str,
+    environ: Mapping[str, str] | None = None,
+    *,
+    probe: Probe = run_probe,
+) -> list[str]:
+    """The slugs `codex debug models` offers, read under an empty `CODEX_HOME`.
+
+    Hidden models are left out. Raises `ProtocolFailure` when the CLI cannot be run or its
+    output is not the recorded shape.
+    """
+    source = os.environ if environ is None else environ
+    with tempfile.TemporaryDirectory(prefix="arena-codex-home-") as scratch:
+        env = probe_environment(source, {"CODEX_HOME": scratch})
+        try:
+            result = probe([binary, "debug", "models"], env, PROBE_TIMEOUT_SECONDS)
+            raw: Any = json.loads(result.stdout)
+        except (OSError, subprocess.TimeoutExpired, json.JSONDecodeError) as error:
+            raise ProtocolFailure(f"model list failed: {error!r}") from error
+    models: Any = cast(dict[str, Any], raw).get("models") if isinstance(raw, dict) else None
+    if not isinstance(models, list):
+        raise ProtocolFailure("model list has no models array")
+    entries = [
+        cast(dict[str, Any], item) for item in cast(list[Any], models) if isinstance(item, dict)
+    ]
+    return sorted(str(item["slug"]) for item in entries if item.get("visibility") == "list")
+
+
 def check_model(
     report: RuntimeReport,
     model: str,
@@ -297,21 +325,10 @@ def check_model(
     if spec is None or report.status is not RuntimeStatus.OK or spec.runtime != "codex":
         return report
     assert report.binary is not None
-    source = os.environ if environ is None else environ
-    with tempfile.TemporaryDirectory(prefix="arena-codex-home-") as scratch:
-        env = probe_environment(source, {"CODEX_HOME": scratch})
-        try:
-            result = probe([report.binary, "debug", "models"], env, PROBE_TIMEOUT_SECONDS)
-            raw: Any = json.loads(result.stdout)
-        except (OSError, subprocess.TimeoutExpired, json.JSONDecodeError) as error:
-            return _with(report, RuntimeStatus.PROTOCOL_FAILURE, f"model list failed: {error!r}")
-    models: Any = cast(dict[str, Any], raw).get("models") if isinstance(raw, dict) else None
-    if not isinstance(models, list):
-        return _with(report, RuntimeStatus.PROTOCOL_FAILURE, "model list has no models array")
-    entries = [
-        cast(dict[str, Any], item) for item in cast(list[Any], models) if isinstance(item, dict)
-    ]
-    listed = sorted(str(item["slug"]) for item in entries if item.get("visibility") == "list")
+    try:
+        listed = read_codex_models(report.binary, environ, probe=probe)
+    except ProtocolFailure as error:
+        return _with(report, RuntimeStatus.PROTOCOL_FAILURE, str(error))
     if model in listed:
         return report
     return _with(
