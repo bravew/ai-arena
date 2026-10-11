@@ -184,14 +184,18 @@ def test_budget_rejects_unpriced_metered_call(tmp_path: Path) -> None:
 def test_budget_records_actual_over_reservation_charge_before_raising(tmp_path: Path) -> None:
     async def run() -> None:
         budget = Budget()
-        reservation = await budget.check_call(
-            _call().model_copy(update={"cost_usd": 5.0}), EventLog(tmp_path / "events")
-        )
+        events = EventLog(tmp_path / "events")
+        reservation = await budget.check_call(_call().model_copy(update={"cost_usd": 5.0}), events)
         with pytest.raises(BudgetExceeded, match="actual charge"):
             await reservation.settle(6.0)
         assert budget.metered_spend_usd == 6.0
         assert budget.report().remaining_usd == 14.0
         assert budget._reserved == {}
+        with pytest.raises(BudgetExceeded, match="actual charge"):
+            await budget.check_call(
+                _call(call_id="c2").model_copy(update={"cost_usd": 0.01}),
+                events,
+            )
 
     asyncio.run(run())
 

@@ -38,7 +38,11 @@ class BudgetReservation:
     async def settle(self, final_cost_usd: float | None = None) -> None:
         if self._settled:
             raise RuntimeError("budget reservation is already settled")
-        await self.budget.settle(self, final_cost_usd, billable=True)
+        try:
+            await self.budget.settle(self, final_cost_usd, billable=True)
+        except BudgetExceeded:
+            self._settled = True
+            raise
         self._settled = True
 
     async def release(self) -> None:
@@ -59,6 +63,7 @@ class Budget:
         self._reserved: dict[str, tuple[float, Call]] = {}
         self._subscription_tokens = 0
         self._compute_cost = 0.0
+        self._over_cap = False
         self._lock = asyncio.Lock()
 
     @property
@@ -80,7 +85,7 @@ class Budget:
                 + sum(reserved_amount for reserved_amount, _ in self._reserved.values())
                 + amount
             )
-            if proposed_spend > self.cap_usd:
+            if self._over_cap or proposed_spend > self.cap_usd:
                 spent = self._metered_spend
                 await events.append(
                     RunEvent(
@@ -101,10 +106,13 @@ class Budget:
                         },
                     )
                 )
-                raise BudgetExceeded(
-                    f"call would exceed the ${self.cap_usd:.2f} metered API budget "
+                reason = (
+                    f"actual charge ${spent:.6f} exceeded the run budget"
+                    if self._over_cap
+                    else f"call would exceed the ${self.cap_usd:.2f} metered API budget "
                     f"(${spent:.6f} spent, ${amount:.6f} requested)"
                 )
+                raise BudgetExceeded(reason)
             if call.id in self._reserved:
                 raise ValueError(f"call already has a budget reservation: {call.id}")
             self._reserved[call.id] = (
@@ -126,7 +134,7 @@ class Budget:
         async with self._lock:
             if call.id not in self._reserved:
                 raise ValueError(f"budget reservation not found for call: {call.id}")
-            reserved_amount, reserved_call = self._reserved[call.id]
+            reserved_amount, _ = self._reserved[call.id]
             if not billable:
                 del self._reserved[call.id]
                 return
@@ -134,11 +142,11 @@ class Budget:
                 del self._reserved[call.id]
                 self._subscription_tokens += sum(
                     (
-                        reserved_call.tokens.in_,
-                        reserved_call.tokens.out,
-                        reserved_call.tokens.reasoning,
-                        reserved_call.tokens.cache_read,
-                        reserved_call.tokens.cache_write,
+                        call.tokens.in_,
+                        call.tokens.out,
+                        call.tokens.reasoning,
+                        call.tokens.cache_read,
+                        call.tokens.cache_write,
                     )
                 )
                 return
@@ -147,10 +155,11 @@ class Budget:
                 return
             del self._reserved[call.id]
             self._metered_spend += final_cost_usd
-            if final_cost_usd > reserved_amount:
+            if final_cost_usd > reserved_amount or self._metered_spend > self.cap_usd:
+                self._over_cap = True
                 raise BudgetExceeded(
                     f"actual charge ${final_cost_usd:.6f} exceeded "
-                    f"reserved amount ${reserved_amount:.6f}"
+                    f"reserved amount ${reserved_amount:.6f} and the run budget"
                 )
 
     async def record_call(

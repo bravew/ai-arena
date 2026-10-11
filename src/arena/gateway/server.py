@@ -433,6 +433,13 @@ async def _protocol(request: Request) -> Response:
                 "budget_context_unavailable",
                 "budget service requires a run event log",
             )
+        if state.budget is not None and state.ledger is None:
+            result_status = 503
+            return _error(
+                result_status,
+                "budget_context_unavailable",
+                "budget service requires a catalog-priced calls ledger",
+            )
         try:
             candidates = _plan_candidates(state, target)
         except _UnsupportedKeyRouting as exc:
@@ -605,6 +612,7 @@ async def _protocol(request: Request) -> Response:
             if finalized:
                 return
             finalized = True
+            final_call: Call | None = None
             if call is not None and context is not None:
                 final_call = call.model_copy(
                     update={
@@ -617,13 +625,22 @@ async def _protocol(request: Request) -> Response:
                         "translated": prepared.translated,
                         "effort_applied": prepared.effort_applied,
                         "model_served": upstream.model_served,
-                        "cost_usd": context.cost_usd,
-                        "price_version": context.price_version,
                     }
                 )
                 if state.ledger is not None:
-                    state.ledger.record(final_call)
+                    priced_call = state.ledger.record(final_call)
+                    final_call = priced_call
+                if reservation is not None:
+                    if 200 <= status_code < 300:
+                        try:
+                            await reservation.settle(final_call.cost_usd)
+                        except BudgetExceeded:
+                            logger.warning("actual call cost exceeded its run budget reservation")
+                    else:
+                        await reservation.release()
+                    reservation = None
                 if state.events is not None:
+                    assert final_call is not None
                     await state.events.append(
                         RunEvent(
                             seq=0,
@@ -647,12 +664,6 @@ async def _protocol(request: Request) -> Response:
                     )
                 if state.exporter is not None:
                     state.exporter.submit_call(final_call)
-            if reservation is not None:
-                if 200 <= status_code < 300:
-                    await reservation.settle(context.cost_usd if context is not None else None)
-                else:
-                    await reservation.release()
-                reservation = None
             if permit is not None:
                 assert lane is not None
                 await lane.release()
