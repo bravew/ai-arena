@@ -1,0 +1,10 @@
+import type { Bundle } from '../../lib/schema';
+import './trace.css';
+
+export function TraceView({ bundle }: { bundle: Bundle }) {
+  const calls = [...bundle.calls].sort((a, b) => a.seq - b.seq);
+  const sessions = bundle.sessions;
+  return <section className="panel trace-view" aria-labelledby="trace-title"><div className="eyebrow">CALLS · PROMPT COMPOSITION</div><h2 id="trace-title">Trace</h2><p>Follow model calls and inspect the token budget by prompt part.</p>
+    {calls.length === 0 ? <p className="summary-empty">No calls are recorded in this bundle.</p> : <ol className="trace-list">{calls.map((call) => { const trial = bundle.trials.find((item) => item.id === call.trial_id); const session = sessions.find((item) => item.trial_id === call.trial_id); const total = call.prompt_parts.reduce((sum, part) => sum + part.tokens, 0); return <li key={call.id} className="trace-step"><div className="trace-step-heading"><strong>{call.purpose} · {call.model_asked}</strong><span>{trial?.task_id ?? call.trial_id ?? call.run_id}</span><span>{call.total_ms} ms · {call.tokens.in + call.tokens.out} tokens</span></div><div className="trace-bar" role="img" aria-label={`Prompt composition: ${call.prompt_parts.map((p) => `${p.kind} ${p.tokens} tokens`).join(', ') || 'no prompt parts'}`}>{call.prompt_parts.map((part) => <div key={part.kind} className={`trace-segment trace-${part.kind}`} style={{ width: `${total ? part.tokens / total * 100 : 0}%` }} title={`${part.kind}: ${part.tokens} tokens`} />)}</div><div className="trace-legend">{call.prompt_parts.map((part) => <span key={part.kind}>{part.kind}: {part.tokens}</span>)}</div><details><summary>Call details</summary><dl><dt>Provider / account</dt><dd>{call.provider} · {call.account_id}</dd><dt>Protocol</dt><dd>{call.protocol_in} → {call.protocol_out}{call.translated ? ' · translated' : ''}</dd><dt>Result</dt><dd>{call.status ?? 'unknown'}{call.error_class ? ` · ${call.error_class}` : ''}</dd><dt>Input / output</dt><dd>{call.tokens.in} / {call.tokens.out} tokens</dd></dl>{session && <p>Session {session.agent} · {session.status}</p>}</details></li>; })}</ol>}
+  </section>;
+}

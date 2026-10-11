@@ -1,0 +1,38 @@
+.ops-view { display: grid; gap: 16px; }
+.ops-panel { min-width: 0; padding: 18px; }
+.ops-heading { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; margin-bottom: 14px; }
+.ops-heading h2 { margin: 5px 0; font-size: 18px; letter-spacing: -.03em; }
+.ops-heading p { margin: 0; color: var(--color-ink-muted); font-size: 11px; }
+.ops-filters { display: flex; flex-wrap: wrap; gap: 10px; margin: 0 0 14px; }
+.ops-filters label { display: grid; gap: 5px; color: var(--color-ink-muted); font-size: 10px; }
+.ops-filters input, .status-filter-trigger { width: min(210px, 70vw); height: 34px; padding: 0 9px; border: 1px solid var(--color-line); border-radius: var(--radius-sm); color: var(--color-ink); background: var(--color-surface); font-size: 11px; text-align: left; }
+.status-filter { position: relative; display: grid; align-content: start; gap: 5px; color: var(--color-ink-muted); font-size: 10px; }
+.status-filter-trigger { display: flex; align-items: center; justify-content: space-between; cursor: pointer; }
+.status-filter-options { position: absolute; z-index: 2; top: 56px; display: grid; width: min(210px, 70vw); padding: 4px; border: 1px solid var(--color-line); border-radius: var(--radius-sm); background: var(--color-surface); box-shadow: var(--shadow-raised); }
+.status-filter-options button { padding: 8px; border: 0; border-radius: 4px; color: var(--color-ink); background: transparent; text-align: left; cursor: pointer; }
+.status-filter-options button:hover, .status-filter-options button[aria-pressed="true"] { background: var(--color-surface-raised); }
+.ops-table { width: 100%; min-width: 690px; font-variant-numeric: tabular-nums; }
+.ops-table td small { display: block; margin-top: 4px; color: var(--color-ink-muted); font-size: 9px; }
+.ops-table .status-chip { white-space: nowrap; }
+.ops-grid { display: grid; grid-template-columns: minmax(0, 1.15fr) minmax(280px, .85fr); gap: 16px; }
+.series-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
+.series-grid h3 { margin: 0 0 10px; font-size: 11px; }
+.ops-chart { display: flex; align-items: end; gap: 8px; height: 145px; padding: 8px 4px 0; border-bottom: 1px solid var(--color-line); background: repeating-linear-gradient(to top, transparent 0, transparent calc(25% - 1px), var(--color-line) 25%); }
+.ops-bar-column { display: flex; flex: 1; height: 100%; flex-direction: column; align-items: center; justify-content: end; gap: 5px; color: var(--color-ink-muted); font-size: 8px; }
+.ops-bar-column i { width: min(24px, 70%); min-height: 3px; border-radius: 4px 4px 0 0; background: var(--color-accent); }
+.ops-bar-column:focus-visible i, .ops-bar-column:hover i { filter: brightness(1.12); }
+.ops-series-table { width: 100%; margin-top: 8px; border-collapse: collapse; font-size: 9px; }
+.ops-series-table caption { color: var(--color-ink-muted); text-align: left; }
+.ops-series-table th, .ops-series-table td { padding: 3px 5px; border-bottom: 1px solid var(--color-line); text-align: left; }
+.ops-bar-column small { height: 12px; }
+.lane-list, .meter-list { display: grid; gap: 14px; }
+.lane-row, .meter-row { display: grid; gap: 7px; }
+.lane-top { display: flex; align-items: center; justify-content: space-between; gap: 8px; font-size: 10px; }
+.lane-top > span:last-child:not(.status-chip), .lane-row small, .meter-row small { color: var(--color-ink-muted); font-size: 9px; }
+.lane-meter { height: 7px; overflow: hidden; border-radius: 6px; background: var(--color-surface-raised); }
+.lane-meter i { display: block; height: 100%; border-radius: inherit; background: var(--color-accent); }
+.meter-row .lane-meter i { background: var(--color-success); }
+.lane-row small span { padding: 0 4px; }
+@media (max-width: 850px) { .ops-grid { grid-template-columns: minmax(0, 1fr); } }
+@media (max-width: 520px) { .ops-panel { padding: 14px; } .series-grid { grid-template-columns: minmax(0, 1fr); } .ops-heading { flex-direction: column; } }
+@media (forced-colors: active) { .ops-bar-column i, .lane-meter i { forced-color-adjust: none; background: Highlight; } }

@@ -6,18 +6,22 @@ change, then follow its source links to check the code.
 
 ## Pages
 
-Pages are added with the code they describe; see
+Subsystem references are added alongside the code they describe; see
 [DEV_PLAN §11](../DEV_PLAN.md#repository-layout).
 
 | Page | Subsystem |
 | --- | --- |
 | [`gateway.md`](gateway.md) | The gateway: protocols, plan, lanes, rests, cache, cassettes, hooks, redaction |
 | [`providers-catalog.md`](providers-catalog.md) | Provider config, key resolution, and the model catalog |
+| [`server.md`](server.md) | Viewer/API server, remote authentication, artifact origin, and static export |
 | [`agent-adapters.md`](agent-adapters.md) | One adapter per agent CLI: wiring, kit install, sessions |
 | [`runners-sandbox.md`](runners-sandbox.md) | Runners, the scheduler, and the Docker sandbox |
 | [`scoring.md`](scoring.md) | Deterministic scorers and LLM judges |
 | [`stats.md`](stats.md) | Aggregation, bootstrap, ratings, Pareto, run-diff |
+| [`viewer-compare.md`](viewer-compare.md) | Compare, Trace, and Run diff views |
 | [`observability.md`](observability.md) | Calls ledger, event stream, spans, metrics |
+| [`sessions-kit-effect.md`](sessions-kit-effect.md) | Sessions timelines and paired kit-effect comparisons |
+| [`ops-view.md`](ops-view.md) | The Ops view: calls ledger, usage, lanes, meters and hook stats |
 | [`viewer-live.md`](viewer-live.md) | The viewer and the Live stage |
 
 ## Page template
