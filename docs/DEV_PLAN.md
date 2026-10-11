@@ -904,7 +904,7 @@ Each checkpoint is one GitHub **epic** issue (label `type:epic`, `cpN`) with its
 2. **Providers at launch**: **Anthropic, OpenAI, Google, OpenRouter (for open-weight models), mock, cassette**.
 3. **Agent CLIs at launch**: **OpenCode (model-axis default), Pi (minimal baseline), Claude Code, Codex CLI (product axis), Aider**; then Gemini CLI and OpenHands.
 4. **Hosting and shell** (resolved in §3.1): **web app served by one daemon, local by default and optionally remote** (run-key auth, tunnel recommended), plus static export. A desktop shell is deferred: pywebview first if wanted, Tauri only if signed installers or auto-update become requirements. A multi-user hosted instance with accounts is still v2.
-5. **Budget per full comparison run**: needs a number from the owner before CP7.
+5. **Budget per full comparison run**: **US$20 hard cap on metered model API charges**. The gateway must stop further model calls at the cap and mark remaining trials skipped. Subscription quota and compute costs are reported separately.
 6. **Use Inspect AI as the execution engine** instead of our own runners? **No for v1.** We need N-way, artifact-first comparison and agent-CLI scaffolds as contestants. We import Inspect logs instead and can revisit later.
 7. **Gateway**: **our own thin gateway, with LiteLLM as a translation library**. Alternatives:
    - LiteLLM Proxy: adds Postgres and its own key management, and doesn't write trial-attributed records at the decision point.

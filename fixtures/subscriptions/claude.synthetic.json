@@ -1,0 +1,1 @@
+{"fixture_kind":"synthetic_shape_only","credentials":{"claudeAiOauth":{"accessToken":"synthetic-claude-access","refreshToken":"synthetic-claude-refresh","expiresAt":1791504000000,"scopes":["user:inference","user:profile"]}},"account":{"email":"synthetic@example.invalid","organization":"org-synthetic"}}
