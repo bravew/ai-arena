@@ -23,7 +23,9 @@ from arena.providers.accounts import (
     read_claude_keychain,
     resolve_sign_in,
     run_vendor_login,
+    sign_in_exists,
 )
+from arena.providers.accounts.keychain import claude_keychain_present
 
 TOKEN = "tok-SECRET-access-value"
 REFRESH = "tok-SECRET-refresh-value"
@@ -284,3 +286,72 @@ def test_claude_sign_in_follows_claude_config_dir(tmp_path: Path) -> None:
     (config / ".credentials.json").write_bytes(CLAUDE_CREDENTIALS)
     sign_in = claude_sign_in({"HOME": str(tmp_path / "other"), "CLAUDE_CONFIG_DIR": str(config)})
     assert sign_in.files == {".claude/.credentials.json": CLAUDE_CREDENTIALS}
+
+
+CLAUDE_CREDENTIALS = json.dumps({"claudeAiOauth": {"accessToken": TOKEN}}).encode()
+
+
+def _keychain_present(monkeypatch: pytest.MonkeyPatch, present: bool) -> list[str]:
+    """Stand in for the macOS Keychain; the list records which reads reached the secret."""
+    reads: list[str] = []
+    monkeypatch.setattr(
+        "arena.providers.accounts.discovery.claude_keychain_present", lambda _environ: present
+    )
+
+    def read(_environ: object) -> SignIn:
+        reads.append("secret")
+        return SignIn({".claude/.credentials.json": CLAUDE_CREDENTIALS})
+
+    monkeypatch.setattr("arena.providers.accounts.discovery.read_claude_keychain", read)
+    return reads
+
+
+def test_keychain_sign_in_is_found_without_reading_the_secret(
+    home: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    reads = _keychain_present(monkeypatch, True)
+    found = discover(_environ(home))
+    assert ("claude", "macOS Keychain") in [(item.vendor, item.location) for item in found]
+    assert sign_in_exists("claude", _environ(home))
+    assert reads == []
+
+
+def test_resolve_reads_the_keychain_only_when_a_run_needs_it(
+    home: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    reads = _keychain_present(monkeypatch, True)
+    store = AccountStore(tmp_path / "accounts")
+    with pytest.raises(SignInError):
+        resolve_sign_in("claude", store, _environ(home), keychain=False)
+    assert reads == []
+    sign_in = resolve_sign_in("claude", store, _environ(home))
+    assert sign_in.files == {".claude/.credentials.json": CLAUDE_CREDENTIALS}
+    assert reads == ["secret"]
+
+
+def test_no_keychain_item_and_discovery_off_stay_signed_out(
+    home: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    reads = _keychain_present(monkeypatch, False)
+    store = AccountStore(tmp_path / "accounts")
+    with pytest.raises(SignInError):
+        resolve_sign_in("claude", store, _environ(home))
+    assert not sign_in_exists("claude", _environ(home))
+    _keychain_present(monkeypatch, True)
+    with pytest.raises(SignInError, match="discovery is off"):
+        resolve_sign_in("claude", store, _environ(home, ARENA_DISCOVER_SIGNINS="0"))
+    assert reads == []
+
+
+def test_keychain_presence_check_never_asks_for_the_secret(tmp_path: Path) -> None:
+    log = tmp_path / "argv"
+    security = _script(tmp_path / "security", f'printf "%s " "$@" > "{log}"')
+    environ = {"HOME": str(tmp_path), "PATH": "/usr/bin:/bin"}
+    assert claude_keychain_present(environ, platform="darwin", security=str(security))
+    assert "-w" not in log.read_text().split()
+    assert not claude_keychain_present(environ, platform="linux", security=str(security))
+    assert not claude_keychain_present(
+        {"PATH": "/usr/bin"}, platform="darwin", security=str(security)
+    )
+    failing = _script(tmp_path / "missing", "exit 44")
+    assert not claude_keychain_present(environ, platform="darwin", security=str(failing))

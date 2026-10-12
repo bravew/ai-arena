@@ -38,7 +38,7 @@ def _catalog() -> ModelCatalog:
                     "ref": "anthropic/claude-opus-5-5",
                     "price_per_mtok": {"in": 15, "out": 75},
                 },
-                {"ref": "anthropic/claude-opus-5-5-sub", "pricing": "subscription"},
+                {"ref": "anthropic-max/claude-opus-5-5", "pricing": "subscription"},
                 {"ref": "openrouter/qwen3-coder:free", "price_per_mtok": {"in": 0, "out": 0}},
             ],
         }
@@ -134,7 +134,11 @@ def test_ledger_preserves_colon_in_non_effort_model_name(tmp_path: Path) -> None
 def test_subscription_cost_is_unknown_and_budget_only_counts_api_spend(tmp_path: Path) -> None:
     async def run() -> None:
         call = _call().model_copy(
-            update={"id": "c2", "model_asked": "anthropic/claude-opus-5-5-sub"}
+            update={
+                "id": "c2",
+                "provider": "anthropic-max",
+                "model_asked": "anthropic-max/claude-opus-5-5",
+            }
         )
         with Store(tmp_path / "arena.db") as store:
             store.execute(

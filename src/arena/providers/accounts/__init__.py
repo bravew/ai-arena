@@ -12,6 +12,7 @@ from arena.providers.accounts.discovery import (
     discover,
     discovery_enabled,
     read_existing,
+    sign_in_exists,
 )
 from arena.providers.accounts.keychain import KeychainError, read_claude_keychain
 from arena.providers.accounts.login import LoginError, run_vendor_login
@@ -24,13 +25,19 @@ from arena.providers.accounts.store import (
 )
 
 
-def resolve_sign_in(vendor: str, store: AccountStore, environ: Mapping[str, str]) -> SignIn:
-    """The sign-in a trial uses: the stored copy, else the CLI's own file if discovery is on."""
+def resolve_sign_in(
+    vendor: str, store: AccountStore, environ: Mapping[str, str], *, keychain: bool = True
+) -> SignIn:
+    """The sign-in a trial uses: the stored copy, else the CLI's own sign-in if discovery is on.
+
+    The CLI's own sign-in includes the macOS Keychain item for Claude. Pass `keychain=False` for
+    status polling, which must not read the secret.
+    """
     stored = store.load(vendor)
     if stored is not None and stored.files:
         return stored
     if discovery_enabled(environ):
-        return read_existing(vendor, environ)
+        return read_existing(vendor, environ, keychain=keychain)
     raise SignInError(
         f"no stored {vendor} sign-in and discovery is off; run `arena providers add` "
         f"or unset {DISCOVERY_SWITCH}"
@@ -53,4 +60,5 @@ __all__ = [
     "redact_id",
     "resolve_sign_in",
     "run_vendor_login",
+    "sign_in_exists",
 ]

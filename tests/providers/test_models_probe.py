@@ -74,12 +74,11 @@ def test_codex_models_come_from_the_cli_list_and_skip_hidden_ones(
     assert {model.source for model in models} == {"cli:codex"}
 
 
-def test_a_signed_out_cli_is_a_discovery_error(
+def test_codex_model_metadata_can_be_listed_while_the_host_cli_is_signed_out(
     codex_environ: dict[str, str], tmp_path: Path
 ) -> None:
     codex_environ["CODEX_HOME"] = str(tmp_path / "nobody")
-    with pytest.raises(DiscoveryError, match="auth_required"):
-        discover_models(CODEX_PROVIDER, codex_environ)
+    assert "gpt-6.1-sol" in {model.id for model in discover_models(CODEX_PROVIDER, codex_environ)}
 
 
 def test_claude_cli_has_no_list_so_the_error_says_to_name_models_by_hand() -> None:

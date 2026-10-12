@@ -19,8 +19,10 @@ from typing import Any, cast
 
 import httpx
 
-from arena.catalog.config import load_catalog
+from arena.catalog.config import ModelCatalog, load_catalog
 from arena.providers.config import Provider, validate_credential_endpoint
+from arena.providers.config_edit import edit_config
+from arena.providers.credentials import credential_environment
 from arena.providers.runtimes import (
     Probe,
     ProtocolFailure,
@@ -28,7 +30,7 @@ from arena.providers.runtimes import (
     run_probe,
     spec_for_vendor,
 )
-from arena.providers.runtimes.detect import RuntimeStatus, detect_runtime
+from arena.providers.runtimes.detect import RuntimeStatus, detect_version
 
 # Which model-list route answers for which protocol, tried in this order.
 _PREFERRED = ("responses", "chat", "anthropic")
@@ -57,13 +59,14 @@ def discover_models(
     *,
     probe: Probe = run_probe,
     client: httpx.Client | None = None,
+    home: Path | None = None,
 ) -> list[DiscoveredModel]:
     source = os.environ if environ is None else environ
     if provider.subscription is not None:
         return _cli_models(provider, source, probe)
     if provider.kind is not None:
         raise DiscoveryError(f"{provider.id} is a built-in {provider.kind} provider")
-    return _api_models(provider, source, client)
+    return _api_models(provider, source, client, home)
 
 
 def _cli_models(
@@ -84,7 +87,7 @@ def _cli_models(
             f"the {spec.binary} CLI has no model list command; name its models in the catalog "
             "by hand"
         )
-    report = detect_runtime(spec, environ, probe=probe)
+    report = detect_version(spec, environ, probe=probe)
     if report.status is not RuntimeStatus.OK or report.binary is None:
         raise DiscoveryError(f"{spec.binary}: {report.status} ({report.detail})")
     try:
@@ -95,7 +98,10 @@ def _cli_models(
 
 
 def _api_models(
-    provider: Provider, environ: Mapping[str, str], client: httpx.Client | None
+    provider: Provider,
+    environ: Mapping[str, str],
+    client: httpx.Client | None,
+    home: Path | None = None,
 ) -> list[DiscoveredModel]:
     apis = _apis(provider)
     protocol = next((name for name in _PREFERRED if name in apis), None)
@@ -109,6 +115,9 @@ def _api_models(
         raise DiscoveryError(
             "credential-bearing provider endpoints require an absolute HTTPS URL"
         ) from error
+    environ = credential_environment(
+        home or Path.home() / ".arena", environ, [provider.keys[0].env]
+    )
     variable = provider.keys[0].env
     variable = variable[2:-1] if variable.startswith("${") and variable.endswith("}") else variable
     secret = environ.get(variable, "")
@@ -163,7 +172,15 @@ def propose(
     if catalog_path is not None and catalog_path.exists():
         known = {item.ref for item in load_catalog(catalog_path).models}
     subscription = provider.subscription is not None
-    protocols = ("responses",) if subscription else tuple(_apis(provider))
+    protocols = (
+        (
+            ("anthropic",)
+            if provider.subscription and provider.subscription.vendor == "claude"
+            else ("responses",)
+        )
+        if subscription
+        else tuple(_apis(provider))
+    )
     return [
         Proposal(f"{provider.id}/{model.id}", protocols, subscription)
         for model in models
@@ -194,12 +211,22 @@ def append_subscription_entries(path: Path, proposals: list[Proposal]) -> list[P
     writable = [item for item in proposals if item.subscription]
     if not writable:
         return []
-    original = path.read_text(encoding="utf-8")
-    separator = "" if original.endswith("\n") else "\n"
-    path.write_text(original + separator + render(writable), encoding="utf-8")
-    try:
-        load_catalog(path)
-    except Exception:
-        path.write_text(original, encoding="utf-8")
-        raise
-    return writable
+    written: list[Proposal] = []
+
+    def append(data: dict[str, Any]) -> None:
+        rows = data.get("models")
+        if not isinstance(rows, list):
+            raise ValueError("catalog models must be a list")
+        rows = cast(list[dict[str, Any]], rows)
+        known = {row.get("ref") for row in rows}
+        for item in writable:
+            if item.ref in known:
+                continue
+            rows.append(
+                {"ref": item.ref, "protocols": list(item.protocols), "pricing": "subscription"}
+            )
+            known.add(item.ref)
+            written.append(item)
+
+    edit_config(path, None, append, ModelCatalog.model_validate)
+    return written

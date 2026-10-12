@@ -137,7 +137,7 @@ def test_catalog_accepts_subscription_pricing_with_unknown_price(tmp_path: Path)
     config = tmp_path / "models.yaml"
     config.write_text(
         "price_version: '2026-10-01'\nmodels:\n"
-        "  - ref: anthropic/claude-opus-5-5-sub\n    protocols: [anthropic]\n"
+        "  - ref: anthropic-max/claude-opus-5-5\n    protocols: [anthropic]\n"
         "    pricing: subscription\n",
         encoding="utf-8",
     )
@@ -297,8 +297,29 @@ def test_shipped_subscription_providers_and_catalog_refs_validate() -> None:
     subscription_model_refs = {
         model.ref for model in catalog.models if model.pricing == "subscription"
     }
-    assert "anthropic-max/claude-opus-5-5-sub" in subscription_model_refs
-    assert "anthropic/claude-opus-5-5-sub" not in subscription_model_refs
+    assert {
+        "anthropic-max/claude-opus-5-5",
+        "anthropic-max/claude-sonnet-5-5",
+    } <= subscription_model_refs
+    assert not any(ref.endswith("-sub") for ref in subscription_model_refs)
+    assert not any(ref.startswith("anthropic/") for ref in subscription_model_refs)
+    comparison = CliRunner().invoke(
+        app,
+        [
+            "plan",
+            str(root / "suites/smoke"),
+            "-c",
+            str(root / "contestants/sets/providers-compare.yaml"),
+            "--catalog",
+            str(root / "catalog/models.yaml"),
+            "--repeats",
+            "1",
+        ],
+    )
+    assert comparison.exit_code == 0, comparison.output
+    assert "anthropic-max/claude-sonnet-5-5" in comparison.output
+    assert "openai-plus/gpt-6.1-sol" in comparison.output
+    assert "anthropic-max/claude-opus" not in comparison.output
     listed = {
         model["slug"]
         for model in json.loads(

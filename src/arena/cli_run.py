@@ -53,7 +53,7 @@ from arena.runners.usage_capture import CaptureError, UsageCapture
 from arena.scorers.base import Scorer, ScorerContext, ScorerError, validate_score
 from arena.scorers.docker_sandbox import docker_sandbox_factory, image_for_command
 from arena.scorers.execution import SandboxFactory
-from arena.scorers.task_scorers import JudgeSetup, TaskScorers, task_scorers
+from arena.scorers.task_scorers import JudgeSetup, TaskScorers, fixture_files, task_scorers
 
 
 def _suite_dir(value: str) -> Path:
@@ -460,6 +460,7 @@ def run(
             )
         )
     else:
+        typer.echo(f"run_id={run_id}")
         recorder = RunRecorder(run_id)
         try:
             providers_config = load_providers(providers) if non_mock else None
@@ -489,7 +490,8 @@ def run(
                     catalog_path=catalog,
                     database_path=db,
                     event_root=db.parent / "runs",
-                    subscriptions_root=(home or Path(".arena")) / "subscriptions",
+                    subscriptions_root=(home or Path.home() / ".arena") / "subscriptions",
+                    home=home,
                     budget_usd=remaining_budget,
                     providers=providers_config,
                     provider_ids={job.contestant.model.provider for job in non_mock_jobs},
@@ -585,7 +587,12 @@ def run(
                             if provider is None:
                                 return await dispatch_api(job)
                             return await execute_local_cli_trial(
-                                job, run_id, shared, provider, task_prompts[job.task.id]
+                                job,
+                                run_id,
+                                shared,
+                                provider,
+                                task_prompts[job.task.id],
+                                fixture_files(task_paths[job.task.id].parent),
                             )
 
                         executor = execute_routed

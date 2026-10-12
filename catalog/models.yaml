@@ -1,21 +1,48 @@
-price_version: 2026-10-11
+price_version: '2026-10-11T21:07:31.402495+00:00'
 models:
-  - ref: anthropic/claude-opus-5-5
-    protocols: [anthropic]
-    context: 1000000
-    efforts: {low: {effort: low}, high: {effort: high}, max: {effort: max}}
-    price_per_mtok: {in: 15.00, out: 75.00, cache_read: 1.50, cache_write: 18.75}
-    source: https://www.anthropic.com/pricing
-  - ref: anthropic/claude-sonnet-4-5
-    protocols: [anthropic]
-    price_per_mtok: {in: 3.00, out: 15.00, cache_read: 0.30, cache_write: 3.75}
-    source: https://claude.com/pricing
-  - ref: anthropic-max/claude-opus-5-5-sub
-    protocols: [anthropic]
-    pricing: subscription
-  - ref: openai-plus/gpt-6.1-sol
-    protocols: [responses]
-    pricing: subscription
-  - ref: openai-plus/gpt-5.6-sol
-    protocols: [responses]
-    pricing: subscription
+- ref: anthropic/claude-opus-5-5
+  protocols:
+  - anthropic
+  context: 1000000
+  efforts:
+    low:
+      effort: low
+    high:
+      effort: high
+    max:
+      effort: max
+  price_per_mtok:
+    in: 15.0
+    out: 75.0
+    cache_read: 1.5
+    cache_write: 18.75
+  source: https://www.anthropic.com/pricing
+- ref: anthropic/claude-sonnet-4-5
+  protocols:
+  - anthropic
+  price_per_mtok:
+    in: 3.0
+    out: 15.0
+    cache_read: 0.3
+    cache_write: 3.75
+  source: https://claude.com/pricing
+- ref: anthropic-max/claude-opus-5-5
+  protocols:
+  - anthropic
+  pricing: subscription
+- ref: anthropic-max/claude-sonnet-5-5
+  protocols:
+  - anthropic
+  pricing: subscription
+- ref: openai-plus/gpt-6.1-sol
+  protocols:
+  - responses
+  pricing: subscription
+- ref: openai-plus/gpt-5.6-sol
+  protocols:
+  - responses
+  pricing: subscription
+- ref: openai-plus/gpt-6-luna
+  protocols:
+  - responses
+  pricing: subscription

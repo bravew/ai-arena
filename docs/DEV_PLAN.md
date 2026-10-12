@@ -334,7 +334,7 @@ models:
     efforts: { low: {effort: low}, high: {effort: high}, max: {effort: max} }   # normalized → provider param
     price_per_mtok: { in: 15.00, out: 75.00, cache_read: 1.50, cache_write: 18.75 }
     source: https://www.anthropic.com/pricing      # where the number came from, checked on this date
-  - ref: anthropic/claude-opus-5-5-sub
+  - ref: anthropic-max/claude-opus-5-5
     protocols: [anthropic]
     pricing: subscription            # reachable only through a subscription (§5.8); price is unknown, not zero
 ```

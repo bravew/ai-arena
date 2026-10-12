@@ -56,7 +56,7 @@ auth) cat '{fixture / "auth-status.signed-in.json"}'; exit 0 ;;
 esac
 echo claude >> '{calls}'
 echo done > answer.md
-sed 's/claude-opus-5-5/claude-opus-5-5-sub/g' '{fixture / "stream.synthetic.jsonl"}'
+cat '{fixture / "stream.synthetic.jsonl"}'
 """,
     )
 
@@ -114,7 +114,7 @@ models:
   - ref: openai/gpt-5.6
     protocols: [responses]
     price_per_mtok: {in: 1, out: 2}
-  - ref: anthropic-max/claude-opus-5-5-sub
+  - ref: anthropic-max/claude-opus-5-5
     protocols: [anthropic]
     pricing: subscription
   - ref: openai-plus/gpt-6.1-sol
@@ -144,7 +144,7 @@ created_at: '2026-10-11'
     )
     claude_contestant = root / "claude.yaml"
     claude_contestant.write_text(
-        "id_label: claude\nmodel: anthropic-max/claude-opus-5-5-sub\n",
+        "id_label: claude\nmodel: anthropic-max/claude-opus-5-5\n",
         encoding="utf-8",
     )
     codex_contestant = root / "codex.yaml"

@@ -67,6 +67,9 @@ class LocalCliRequest:
     environ: Mapping[str, str]
     scratch_base: Path | None = None
     task_files: Mapping[str, bytes] = field(default_factory=lambda: dict[str, bytes]())
+    # The task's starting repository, placed at the workspace root so a prompt that says
+    # "greeting.py in this repository" finds it. Unchanged copies are not returned as outputs.
+    fixtures: Mapping[str, bytes] = field(default_factory=lambda: dict[str, bytes]())
 
 
 @dataclass(frozen=True)
@@ -135,6 +138,7 @@ async def run_local_cli(request: LocalCliRequest) -> LocalCliResult:
                 )
         _place_files(home, request.sign_in.files)
         _place_files(workspace / TASK_INPUT, request.task_files)
+        _place_files(workspace, request.fixtures)
         argv = request.adapter.command(request.binary, request.model, request.prompt, workspace)
         try:
             process = await asyncio.create_subprocess_exec(
@@ -161,7 +165,7 @@ async def run_local_cli(request: LocalCliRequest) -> LocalCliResult:
         lines = stdout.decode("utf-8", errors="replace").splitlines()
         summary = request.adapter.parse([line for line in lines if line.strip()])
         served = summary.model_served or _read_codex_rollout(home)
-        outputs = _collect_outputs(workspace)
+        outputs = _collect_outputs(workspace, request.fixtures)
         return _classify(started, request, process.returncode, summary, served, stderr, outputs)
     finally:
         shutil.rmtree(scratch, ignore_errors=True)
@@ -229,8 +233,8 @@ def _safe(relative: str) -> bool:
     return not path.is_absolute() and all(part not in {"", ".", ".."} for part in path.parts)
 
 
-def _collect_outputs(workspace: Path) -> dict[str, bytes]:
-    """Files the CLI wrote, except the task inputs, links, and anything very large."""
+def _collect_outputs(workspace: Path, fixtures: Mapping[str, bytes]) -> dict[str, bytes]:
+    """Files the CLI wrote or changed, except the task inputs, links, and anything very large."""
     found: dict[str, bytes] = {}
     for path in sorted(workspace.rglob("*")):
         if path.is_symlink() or not path.is_file():
@@ -240,7 +244,10 @@ def _collect_outputs(workspace: Path) -> dict[str, bytes]:
             continue
         if path.stat().st_size > MAX_OUTPUT_FILE_BYTES:
             continue
-        found[relative] = path.read_bytes()
+        content = path.read_bytes()
+        if fixtures.get(relative) == content:
+            continue
+        found[relative] = content
     return found
 
 

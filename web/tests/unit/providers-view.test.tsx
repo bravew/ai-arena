@@ -47,11 +47,14 @@ describe('ProvidersView', () => {
   });
 
   it('states that a connection test sends one capped request and displays the result', async () => {
-    const runTest = vi.fn(async () => ({ ok: true, message: 'One capped model call was sent through the vendor CLI and recorded.' }));
+    const runTest = vi.fn(async () => ({ ok: true, message: 'One capped model call was sent through the vendor CLI and recorded.', source: 'cli_reported', tokens: { input: 2979, output: 5, cache_read: 11008 } }));
     render(<ProvidersView load={load} runTest={runTest} />);
     fireEvent.click(await screen.findAllByRole('button', { name: 'Test connection' }).then((buttons) => buttons[0]!));
-    expect(screen.getAllByText('This sends one capped model request.')).toHaveLength(8);
+    expect(screen.getAllByText(/This sends one (capped model|real) request/).length).toBe(8);
+    expect(screen.getAllByText(/uses subscription quota/).length).toBeGreaterThan(0);
     expect(await screen.findByText('One capped model call was sent through the vendor CLI and recorded.')).toBeTruthy();
+    expect(screen.getByText('Test passed')).toBeTruthy();
+    expect(screen.getByText(/2,979 input · 5 output · 11,008 cache read/)).toBeTruthy();
     expect(runTest).toHaveBeenCalledWith('claude-plan');
   });
 
@@ -61,6 +64,77 @@ describe('ProvidersView', () => {
     await screen.findAllByRole('heading', { name: 'claude-plan' });
     fireEvent.click(screen.getAllByRole('button', { name: 'Test connection' })[0]!);
     expect(await screen.findByText('connection test is rate limited; wait 30 seconds')).toBeTruthy();
+    expect(screen.queryByText('Test passed')).toBeNull();
     expect(screen.queryByText(/sk-[a-z0-9]+/i)).toBeNull();
+  });
+
+  it('marks a failed test as failed and shows no usage line when none was reported', async () => {
+    const runTest = vi.fn(async () => ({ ok: false, status: 'failed', message: 'The CLI reported an expired sign-in.' }));
+    render(<ProvidersView load={load} runTest={runTest} />);
+    fireEvent.click((await screen.findAllByRole('button', { name: 'Test connection' }))[0]!);
+    expect(await screen.findByText('Test failed')).toBeTruthy();
+    expect(screen.queryByText(/Usage reported by/)).toBeNull();
+  });
+});
+
+describe('RunLauncher', () => {
+  const writable: ProvidersSnapshot = { ...snapshot, revision: 'r', catalog_revision: 'c', settings_home: '/tmp/home', capabilities: { settings: true, launch: true } };
+  const options = {
+    suites: [{ id: 'tiny', tasks: 2, kinds: ['codegen'] }],
+    sets: [{ name: 'sets/pair', contestants: [{ label: 'a', model: 'anthropic-max/claude-sonnet-5-5', runnable: true, kind: 'subscription', reason: '' }] }],
+    models: [{ ref: 'anthropic-max/claude-sonnet-5-5', provider: 'anthropic-max', vendor: 'claude', enabled: true }],
+    docker_available: false, limits: { max_repeats: 10, max_trials: 200 }, active_job: null,
+  };
+  const plan = { suite: 'tiny', set: 'sets/pair', repeats: 2, tasks: 2, contestants: 1, trials: 4, subscription_trials: 4, scorers: ['execution'], startable: true, blockers: [] };
+  const job = { id: '0123456789abcdef', suite: 'tiny', set: 'sets/pair', repeats: 2, trials: 4, score_execution: false, state: 'running', run_id: 'abc', started_at: 1, finished_at: null, exit_code: null, message: '' };
+  function setup(extra: Partial<Record<string, unknown>> = {}) {
+    vi.stubGlobal('fetch', vi.fn(async (path: string) => new Response(JSON.stringify(path === '/api/provider-settings' ? { csrf_token: 'tok' } : {}), { status: 200 })));
+    const api = {
+      options: vi.fn(async () => options), jobs: vi.fn(async () => []), job: vi.fn(async () => ({ ...job, log_tail: 'run_id=abc' })),
+      saveSet: vi.fn(async () => ({ ok: true })), plan: vi.fn(async () => plan), start: vi.fn(async () => job),
+      cancel: vi.fn(async () => job), resume: vi.fn(async () => job), ...extra,
+    };
+    render(<ProvidersView load={async () => writable} launch={api as never} />);
+    return api;
+  }
+  afterEach(() => vi.unstubAllGlobals());
+
+  it('previews the plan, requires quota confirmation, then starts', async () => {
+    const api = setup();
+    fireEvent.click(await screen.findByRole('button', { name: 'Preview plan' }));
+    expect(await screen.findByText('2 tasks × 1 contestant × 2 repeats = 4 trials')).toBeTruthy();
+    const start = screen.getByRole('button', { name: 'Start run' }) as HTMLButtonElement;
+    expect(start.disabled).toBe(true);
+    fireEvent.click(screen.getByLabelText(/uses my subscription quota/));
+    expect(start.disabled).toBe(false);
+    fireEvent.click(start);
+    await vi.waitFor(() => expect(api.start).toHaveBeenCalledWith('tiny', 'sets/pair', 1, false, 'tok'));
+  });
+
+  it('saves a contestant set from chosen models and a valid name', async () => {
+    const api = setup();
+    const save = (await screen.findByRole('button', { name: 'Save contestant set' })) as HTMLButtonElement;
+    expect(save.disabled).toBe(true);
+    fireEvent.click(screen.getByLabelText('anthropic-max/claude-sonnet-5-5'));
+    fireEvent.change(screen.getByLabelText('Set name'), { target: { value: 'pair' } });
+    fireEvent.click(save);
+    await vi.waitFor(() => expect(api.saveSet).toHaveBeenCalledWith('pair', ['anthropic-max/claude-sonnet-5-5'], false, 'tok'));
+  });
+
+  it('disables execution scoring without Docker and blocks a plan with blockers', async () => {
+    setup({ plan: vi.fn(async () => ({ ...plan, startable: false, blockers: ['run them in the CLI'] })) });
+    expect(((await screen.findByLabelText(/Run execution scorers in Docker/)) as HTMLInputElement).disabled).toBe(true);
+    fireEvent.click(screen.getByRole('button', { name: 'Preview plan' }));
+    expect(await screen.findByText('run them in the CLI')).toBeTruthy();
+    expect((screen.getByRole('button', { name: 'Start run' }) as HTMLButtonElement).disabled).toBe(true);
+  });
+
+  it('shows a running job with cancel and its log', async () => {
+    const api = setup({ jobs: vi.fn(async () => [job]) });
+    fireEvent.click(await screen.findByRole('button', { name: 'Cancel run' }));
+    await vi.waitFor(() => expect(api.cancel).toHaveBeenCalledWith(job.id, 'tok'));
+    fireEvent.click(screen.getByRole('button', { name: 'Show log' }));
+    expect((await screen.findByLabelText('Run log')).textContent).toBe('run_id=abc');
+    expect((screen.getByRole('button', { name: 'Start run' }) as HTMLButtonElement).disabled).toBe(true);
   });
 });

@@ -1,0 +1,8 @@
+# Claude Sonnet 5.5 vs GPT-6-Luna, both through their subscription CLIs: 2 contestants.
+matrix:
+  model:
+    - anthropic-max/claude-sonnet-5-5
+    - openai-plus/gpt-6-luna
+  scaffold:
+    - none
+orchestration: single

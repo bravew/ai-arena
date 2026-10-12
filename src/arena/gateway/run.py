@@ -110,7 +110,9 @@ def create_run_app(
     app = create_production_app(
         providers,
         catalog,
-        endpoint_resolver=EndpointResolver(subscriptions=SubscriptionStore(subscriptions_root)),
+        endpoint_resolver=EndpointResolver(
+            subscriptions=SubscriptionStore(subscriptions_root), home=subscriptions_root.parent
+        ),
         context_provider=cast(CallContextProvider, context_provider),
         budget=budget,
         ledger=ledger,

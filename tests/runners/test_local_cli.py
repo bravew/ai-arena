@@ -27,6 +27,7 @@ from arena.runners.local_cli import (
     FailureKind,
     LocalCliRequest,
     LocalCliResult,
+    _collect_outputs,  # pyright: ignore[reportPrivateUsage]
     adapter_for_runtime,
     run_local_cli,
     served_matches,
@@ -79,6 +80,7 @@ if [ "$1" = "--version" ]; then printf '%s\\n' '2.1.296 (Claude Code)'; exit 0; 
     if [ -f "$f" ]; then echo "signin=$(ls -l "$f" | cut -c1-10) $(wc -c < "$f" | tr -d ' ')"; fi
   done
   [ -f task-input/prompt.md ] && echo "task-input=present"
+  [ -f greeting.py ] && echo "fixture=$(cat greeting.py)"
 }} > {shlex.quote(str(record))}
 sleep {sleep}
 {"echo done > answer.md" if answer else ":"}
@@ -461,3 +463,29 @@ def test_adapters_have_distinct_runtimes() -> None:
     assert (ClaudeLocalAdapter().runtime, CodexLocalAdapter().runtime) == ("claude", "codex")
     with pytest.raises(ValueError):
         adapter_for_runtime("other")
+
+
+def test_task_fixtures_start_at_the_workspace_root_and_only_changes_come_back(
+    dirs: tuple[Path, Path, Path],
+) -> None:
+    binary_dir, scratch, home = dirs
+    record = binary_dir / "record"
+    claude = _fake(binary_dir, "claude", CLAUDE_STREAM, record)
+    request = _request(claude, scratch, home=home)
+    request = LocalCliRequest(
+        **{**request.__dict__, "fixtures": {"greeting.py": b"fixture-body"}},
+    )
+    result = asyncio.run(run_local_cli(request))
+    assert result.ok, result.detail
+    assert _record(record)["fixture"] == ["fixture-body"]
+    # The untouched fixture is not an output; only what the CLI wrote is.
+    assert result.outputs == {"answer.md": b"done\n"}
+
+
+def test_collect_outputs_returns_a_changed_fixture_and_skips_an_unchanged_one(
+    tmp_path: Path,
+) -> None:
+    (tmp_path / "same.py").write_bytes(b"a")
+    (tmp_path / "edited.py").write_bytes(b"new")
+    found = _collect_outputs(tmp_path, {"same.py": b"a", "edited.py": b"old"})
+    assert found == {"edited.py": b"new"}

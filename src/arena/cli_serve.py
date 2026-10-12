@@ -20,6 +20,15 @@ def serve_command(
         int, typer.Option("--artifact-port", help="HTML artifact origin port.")
     ] = 7402,
     home: Annotated[Path | None, typer.Option("--home", help="Arena data directory.")] = None,
+    providers: Annotated[Path, typer.Option("--providers")] = Path("providers.yaml"),
+    catalog: Annotated[Path, typer.Option("--catalog")] = Path("catalog/models.yaml"),
+    project_root: Annotated[
+        Path | None,
+        typer.Option(
+            "--project-root",
+            help="Directory holding suites/ and contestants/ for runs started from the viewer.",
+        ),
+    ] = None,
     run_key: Annotated[
         str | None,
         typer.Option(
@@ -44,6 +53,9 @@ def serve_command(
             home,
             run_key or os.environ.get("ARENA_RUN_KEY"),
             trusted_proxy or os.environ.get("ARENA_TRUSTED_PROXY"),
+            provider_config=providers,
+            provider_catalog=catalog,
+            project_root=project_root,
         )
     except ValueError as error:
         typer.echo(str(error), err=True)

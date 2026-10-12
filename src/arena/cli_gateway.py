@@ -27,6 +27,7 @@ from arena.gateway.endpoints import EndpointResolver
 from arena.gateway.litellm_adapter import create_production_app
 from arena.providers.accounts import AccountError, KeychainError, read_claude_keychain
 from arena.providers.config import Provider, load_providers, validate_credential_endpoint
+from arena.providers.credentials import CredentialError, credential_environment, environment_name
 from arena.providers.subscriptions import (
     SubscriptionError,
     SubscriptionStore,
@@ -73,7 +74,7 @@ def build_gateway_app(
         application = create_production_app(
             provider_config,
             model_catalog,
-            endpoint_resolver=EndpointResolver(subscriptions=_subscription_store(home)),
+            endpoint_resolver=EndpointResolver(subscriptions=_subscription_store(home), home=home),
         )
         serve(app=application, host=host, port=port)
 
@@ -122,6 +123,7 @@ def test_providers(
         "providers.yaml"
     ),
     timeout: Annotated[float, typer.Option("--timeout", min=0.1)] = 10.0,
+    home: Annotated[Path | None, typer.Option("--home")] = None,
 ) -> None:
     """Send one-token requests for every configured API key/account."""
     try:
@@ -159,9 +161,17 @@ def test_providers(
                 typer.echo(f"{provider.id}/{key.id}: failed (ValueError)")
                 failures += 1
                 continue
-            secret = os.environ.get(_environment_name(key.env))
+            try:
+                environment = credential_environment(
+                    home or Path.home() / ".arena", os.environ, [key.env]
+                )
+                secret = environment.get(environment_name(key.env))
+            except CredentialError:
+                typer.echo(f"{provider.id}/{key.id}: failed (credential store unavailable)")
+                failures += 1
+                continue
             if not secret:
-                typer.echo(f"{provider.id}/{key.id}: failed (environment variable is unset)")
+                typer.echo(f"{provider.id}/{key.id}: failed (credential is unavailable)")
                 failures += 1
                 continue
             try:
@@ -323,10 +333,6 @@ def _provider_apis(provider: Provider) -> dict[str, str]:
         return {}
     raw_apis = cast(dict[str, Any], apis)
     return {key: value for key, value in raw_apis.items() if isinstance(value, str)}
-
-
-def _environment_name(reference: str) -> str:
-    return reference[2:-1] if reference.startswith("${") and reference.endswith("}") else reference
 
 
 def _test_provider_endpoint(protocol: str, endpoint: str, secret: str, timeout: float) -> int:
