@@ -63,7 +63,9 @@ if mode == "hang":
 
 
 @contextmanager
-def launch_server(tmp_path: Path, mode: str = "ok") -> Generator[tuple[str, Path, str]]:
+def launch_server(
+    tmp_path: Path, mode: str = "ok", *, executable_path: Path | None = None
+) -> Generator[tuple[str, Path, str]]:
     root = tmp_path / "project"
     (root / "suites" / "tiny" / "tasks" / "one").mkdir(parents=True)
     (root / "suites" / "tiny" / "tasks" / "one" / "task.yaml").write_text(TASK)
@@ -88,7 +90,7 @@ def launch_server(tmp_path: Path, mode: str = "ok") -> Generator[tuple[str, Path
         provider_catalog=catalog,
         provider_environ={
             "ARENA_DISCOVER_SIGNINS": "0",
-            "PATH": "/usr/bin:/bin",
+            "PATH": str(executable_path) if executable_path is not None else "/usr/bin:/bin",
             "FAKE_ARGV": str(argv_file),
             "FAKE_MODE": mode,
         },
@@ -242,11 +244,26 @@ def test_one_run_at_a_time_and_cancel_stops_the_child(tmp_path: Path) -> None:
         assert wait_for(base, job["id"], {"cancelled"})["state"] == "cancelled"
 
 
-def test_score_execution_needs_docker(tmp_path: Path) -> None:
-    with launch_server(tmp_path) as (base, _, _):
+@pytest.mark.parametrize("docker_available", [False, True])
+def test_score_execution_needs_docker(tmp_path: Path, docker_available: bool) -> None:
+    executable_path = tmp_path / "bin"
+    executable_path.mkdir()
+    if docker_available:
+        docker = executable_path / "docker"
+        docker.write_text("#!/bin/sh\nexit 0\n")
+        docker.chmod(0o755)
+    with launch_server(tmp_path, executable_path=executable_path) as (base, _, argv_file):
+        status, options = call(base, "/api/launch/options")
+        assert status == 200 and options["docker_available"] is docker_available
         body = {"suite": "tiny", "set": "mock", "repeats": 1, "score_execution": True}
-        status, refused = call(base, "/api/launch/runs", body, token=csrf(base))
-        assert status == 422 and "Docker" in refused["error"]
+        status, result = call(base, "/api/launch/runs", body, token=csrf(base))
+        if docker_available:
+            assert status == 200, result
+            assert wait_for(base, result["id"], {"succeeded", "failed"})["state"] == "succeeded"
+            assert "--score-execution" in Path(argv_file).read_text().split()
+        else:
+            assert status == 422 and "Docker" in result["error"]
+            assert not Path(argv_file).exists()
 
 
 def test_unknown_or_malformed_run_ids_are_not_found(tmp_path: Path) -> None:
