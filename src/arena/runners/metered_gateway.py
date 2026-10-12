@@ -10,6 +10,7 @@ import subprocess
 import threading
 import time
 import uuid
+from collections.abc import Mapping
 from contextlib import suppress
 from pathlib import Path
 from typing import Any, cast
@@ -20,7 +21,8 @@ from arena.agents.base import AgentProtocol
 from arena.core.models import Call
 from arena.core.store import Store
 from arena.gateway.auth import Purpose, parse_token, token_for_trial
-from arena.providers.config import ProviderConfig
+from arena.providers.config import ProviderConfig, validate_credential_endpoint
+from arena.providers.credentials import CredentialError, credential_environment, environment_name
 
 GATEWAY_IMAGE = "arena-gateway:dev"
 
@@ -46,6 +48,8 @@ class GatewayContainer:
         budget_usd: float,
         providers: ProviderConfig,
         provider_ids: set[str],
+        home: Path | None = None,
+        environ: Mapping[str, str] | None = None,
         timeout: float = 30.0,
         docker: Any = None,
         http_get: Any = None,
@@ -62,6 +66,8 @@ class GatewayContainer:
         self.budget_usd = budget_usd
         self.providers = providers
         self.provider_ids = provider_ids
+        self.home = home if home is not None else Path.home() / ".arena"
+        self._environ = environ
         self.timeout = timeout
         self._docker = docker or _docker
         self._http_get = http_get or httpx.get
@@ -88,10 +94,34 @@ class GatewayContainer:
                 )
             if not provider.keys:
                 raise GatewayRuntimeError(f"provider has no configured credential: {provider.id}")
-            for key in provider.keys:
-                if not os.environ.get(key.env):
-                    raise GatewayRuntimeError(f"provider credential is unavailable: {key.env}")
+        self._credential_environment()
         self.check_images(images)
+
+    def _credential_environment(self) -> tuple[list[str], dict[str, str]]:
+        references: list[str] = []
+        for provider in self.providers.providers:
+            if not provider.enabled or provider.id not in self.provider_ids:
+                continue
+            apis = (provider.model_extra or {}).get("apis", {})
+            if isinstance(apis, dict):
+                for endpoint in cast(dict[str, Any], apis).values():
+                    if isinstance(endpoint, str):
+                        try:
+                            validate_credential_endpoint(endpoint)
+                        except ValueError:
+                            raise GatewayRuntimeError("provider endpoint is unsafe") from None
+            references.extend(key.env for key in provider.keys)
+        try:
+            names = list(dict.fromkeys(environment_name(reference) for reference in references))
+            environment = credential_environment(
+                self.home, os.environ if self._environ is None else self._environ, references
+            )
+        except CredentialError:
+            raise GatewayRuntimeError("provider credential store is unavailable") from None
+        for name in names:
+            if not environment.get(name):
+                raise GatewayRuntimeError(f"provider credential is unavailable: {name}")
+        return names, environment
 
     def check_images(self, images: list[str]) -> None:
         try:
@@ -109,6 +139,7 @@ class GatewayContainer:
                 ) from error
 
     def start(self) -> None:
+        names, environment = self._credential_environment()
         self.subscriptions_root.mkdir(parents=True, exist_ok=True)
         self.event_root.mkdir(parents=True, exist_ok=True)
         self.database_path.parent.mkdir(parents=True, exist_ok=True)
@@ -124,11 +155,8 @@ class GatewayContainer:
             )
             self._image_ready = True
         env_args: list[str] = []
-        for provider in self.providers.providers:
-            if not provider.enabled or provider.id not in self.provider_ids:
-                continue
-            for key in provider.keys:
-                env_args.extend(("--env", key.env))
+        for name in names:
+            env_args.extend(("--env", name))
         args = [
             "run",
             "--detach",
@@ -168,7 +196,7 @@ class GatewayContainer:
             "--budget-usd",
             str(self.budget_usd),
         ]
-        self._docker(*args, cwd=self.project_root)
+        self._docker(*args, cwd=self.project_root, env=environment)
         self._started = True
         self._wait_ready()
 
@@ -197,19 +225,19 @@ class GatewayContainer:
         raise GatewayRuntimeError("gateway did not become healthy before startup timed out")
 
 
-def _docker(*args: str, cwd: Path) -> str:
+def _docker(*args: str, cwd: Path, env: Mapping[str, str] | None = None) -> str:
     try:
         result = subprocess.run(
             ("docker", *args),
             cwd=cwd,
+            env=env,
             capture_output=True,
             text=True,
             check=True,
             timeout=300,
         )
-    except (OSError, subprocess.SubprocessError) as error:
-        detail = getattr(error, "stderr", "")
-        raise GatewayRuntimeError(f"Docker gateway operation failed: {detail or error}") from error
+    except (OSError, subprocess.SubprocessError):
+        raise GatewayRuntimeError("Docker gateway operation failed") from None
     return result.stdout.strip()
 
 

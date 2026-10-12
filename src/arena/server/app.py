@@ -6,11 +6,12 @@ import hashlib
 import hmac
 import ipaddress
 import json
+import os
 import re
 import secrets
 import threading
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any, cast
@@ -32,6 +33,14 @@ class ArenaHTTPServer(ThreadingHTTPServer):
     allow_reuse_address = True
     arena_routes: list[tuple[str, str, Callable[..., None]]]
     register_route: Callable[[str, str, Callable[..., None]], None]
+    settings_token: str
+    settings_enabled: bool
+    close_callbacks: list[Callable[[], None]]
+
+    def server_close(self) -> None:
+        for callback in self.close_callbacks:
+            callback()
+        super().server_close()
 
 
 def create_server(
@@ -48,6 +57,8 @@ def create_server(
     provider_config: Path = Path("providers.yaml"),
     provider_catalog: Path = Path("catalog/models.yaml"),
     provider_environ: dict[str, str] | None = None,
+    project_root: Path | None = None,
+    launch_command: Sequence[str] | None = None,
     provider_detect: Callable[[Provider], RuntimeReport] | None = None,
     provider_test_runner: Callable[[LocalCliRequest], LocalCliResult] | None = None,
 ) -> ArenaHTTPServer:
@@ -131,6 +142,37 @@ def create_server(
                 return False
             host = (self.headers.get("Host") or "").lower()
             return not host or urlsplit(origin).netloc.lower() != host
+
+        def local_settings_access(self, *, mutation: bool = False) -> bool:
+            if off_box or artifacts or trusted_proxy is not None:
+                return False
+            try:
+                if not ipaddress.ip_address(self.client_address[0]).is_loopback:
+                    return False
+                hosts = self.headers.get_all("Host", [])
+                if len(hosts) != 1:
+                    return False
+                authority = urlsplit("http://" + hosts[0])
+                if authority.hostname not in {"localhost", "127.0.0.1", "::1"}:
+                    return False
+                if authority.port != server.server_address[1]:
+                    return False
+                if authority.username is not None or authority.path or authority.query:
+                    return False
+                origin = self.headers.get("Origin")
+                if origin is not None and origin != "http://" + hosts[0]:
+                    return False
+                if mutation:
+                    # Compare bytes: a non-ASCII header is Latin-1 text, and compare_digest
+                    # raises TypeError on non-ASCII str rather than returning False.
+                    token = self.headers.get("X-Arena-CSRF", "")
+                    if origin is None or not hmac.compare_digest(
+                        token.encode("utf-8"), server.settings_token.encode("utf-8")
+                    ):
+                        return False
+                return True
+            except (TypeError, UnicodeError, ValueError):
+                return False
 
         def do_GET(self) -> None:
             parsed = urlsplit(self.path)
@@ -303,6 +345,9 @@ def create_server(
             self.send_json(404, {"error": "not found"})
 
     server = ArenaHTTPServer((host, port), Handler)
+    server.settings_token = secrets.token_urlsafe(32)
+    server.settings_enabled = not off_box and not artifacts and trusted_proxy is None
+    server.close_callbacks = []
     server.arena_routes = routes  # type: ignore[attr-defined]
     server.register_route = route  # type: ignore[attr-defined]
 
@@ -389,6 +434,17 @@ def create_server(
             catalog_path=provider_catalog,
             **provider_options,
         )
+        from arena.server.launch_api import CHILD_COMMAND, register_launch_routes
+
+        register_launch_routes(
+            server,
+            data_home,
+            project_root=project_root or Path.cwd(),
+            providers_path=provider_config,
+            catalog_path=provider_catalog,
+            environ=provider_environ if provider_environ is not None else dict(os.environ),
+            command=launch_command or CHILD_COMMAND,
+        )
         register_vote_routes(
             server,
             vote_service
@@ -404,6 +460,9 @@ def serve(
     home: Path | None = None,
     run_key: str | None = None,
     trusted_proxy: str | None = None,
+    provider_config: Path = Path("providers.yaml"),
+    provider_catalog: Path = Path("catalog/models.yaml"),
+    project_root: Path | None = None,
 ) -> None:
     """Run viewer/API and artifact servers on separate ports."""
     session_secret = secrets.token_bytes(32)
@@ -414,6 +473,9 @@ def serve(
         run_key=run_key,
         trusted_proxy=trusted_proxy,
         session_secret=session_secret,
+        provider_config=provider_config,
+        provider_catalog=provider_catalog,
+        project_root=project_root,
     )
     artifact_server = create_server(
         host,

@@ -99,6 +99,7 @@ def test_mock_run_is_readable_as_a_bundle(tmp_path: Path) -> None:
     )
     assert result.exit_code == 0, result.output
     run_id = result.output.split("Run ", 1)[1].split(":", 1)[0]
+    assert f"run_id={run_id}" in result.output.splitlines()
 
     bundle = build_bundle(open_run(tmp_path, run_id))
     assert {item["label"] for item in bundle["contestants"]} == {"mock-a", "mock-b"}

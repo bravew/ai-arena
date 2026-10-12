@@ -52,6 +52,13 @@ def test_second_event_log_writer_for_same_root_is_rejected(tmp_path: Path) -> No
         EventLog(tmp_path)
 
 
+def test_closing_an_event_log_frees_its_root_for_the_next_writer(tmp_path: Path) -> None:
+    first = EventLog(tmp_path)
+    first.close()
+    first.close()
+    EventLog(tmp_path).close()
+
+
 def test_event_log_recovers_sequence_from_existing_append_only_file(tmp_path: Path) -> None:
     async def run() -> None:
         run_dir = tmp_path / "r1"

@@ -31,6 +31,12 @@ class EventLog:
         self._writer_lock_fd: int | None = None
         self._acquire_writer_lock()
 
+    def close(self) -> None:
+        """Release the writer lock so another log may open the same root. Safe to repeat."""
+        fd, self._writer_lock_fd = self._writer_lock_fd, None
+        if fd is not None:
+            os.close(fd)
+
     async def append(self, event: RunEvent) -> RunEvent:
         self._validate_run_id(event.run_id)
         self._acquire_writer_lock()

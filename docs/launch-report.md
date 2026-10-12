@@ -102,8 +102,9 @@ Two checked-in sets do expand to 3 contestants:
 $ uv run arena plan suites/skill-ablation -c contestants/sets/providers-compare.yaml --repeats 3
 Expanded contestants:
   b5a9bd726e82: anthropic/claude-sonnet-4-5
-  2b8bbf27fc9e: anthropic-max/claude-opus-5-5-sub
+  ac6669953326: anthropic-max/claude-sonnet-5-5
   fff84e7f1d76: openai-plus/gpt-6.1-sol
+Unsupported pairs: none (no adapter declares an unsupported pair)
 Trials: 90
 Estimated cost: unknown
 ```

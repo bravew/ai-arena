@@ -11,6 +11,7 @@ import pytest
 
 from arena.agents.local import ClaudeLocalAdapter, SignIn
 from arena.core.store import Store
+from arena.obs.events import EventLog
 from arena.providers.accounts import AccountStore
 from arena.providers.runtimes import AuthState, RuntimeReport, RuntimeStatus
 from arena.runners.local_cli import LocalCliResult
@@ -79,9 +80,13 @@ def setup(tmp_path: Path) -> tuple[Path, Path]:
     catalog.write_text(
         """price_version: test
 models:
-  - ref: claude-plan/claude-opus-5-5-sub
+  - ref: claude-plan/claude-opus-5-5
     protocols: [anthropic]
     pricing: subscription
+  - ref: missing-api/claude-sonnet-5-5
+    protocols: [anthropic]
+    price_per_mtok: {in: 2, out: 10}
+    source: https://provider.example/prices
 """,
         encoding="utf-8",
     )
@@ -121,7 +126,9 @@ def test_provider_list_exposes_runtime_status_and_env_names_only(
     assert rows["missing-api"]["key_envs"] == ["API_KEY"]
     assert rows["disabled"]["status"] == "disabled"
     assert secret not in json.dumps(body)
-    assert body["instructions"]["note"].startswith("Name the environment variable")
+    assert body["instructions"]["note"].startswith("Configure providers and models")
+    assert rows["missing-api"]["credentials"][0]["source"] == "environment"
+    assert body["capabilities"]["settings"] is True
 
 
 def test_cli_connection_test_records_usage_and_finishes_run(
@@ -140,7 +147,7 @@ def test_cli_connection_test_records_usage_and_finishes_run(
 
     def runner(cli_request: Any) -> LocalCliResult:
         assert cli_request.binary == str(binary)
-        assert cli_request.model == "claude-opus-5-5-sub"
+        assert cli_request.model == "claude-opus-5-5"
         summary = ClaudeLocalAdapter().parse(
             (FIXTURES / "claude" / "stream.synthetic.jsonl").read_text().splitlines()
         )
@@ -187,6 +194,9 @@ def test_cli_connection_test_records_usage_and_finishes_run(
         assert store.execute("SELECT status FROM trials").fetchone()[0] == "succeeded"
         assert store.execute("SELECT COUNT(*) FROM calls").fetchone()[0] == 1
     assert list((tmp_path / "provider-tests").glob("*/events.jsonl"))
+    # A finished test must release the event-log writer lock, or the next test is refused and
+    # the viewer only sees "Failed to fetch".
+    EventLog(tmp_path / "provider-tests").close()
 
 
 def test_connection_test_is_rate_limited_and_does_not_repeat_request(

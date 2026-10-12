@@ -107,8 +107,13 @@ def _execution(
         sandbox_for(argv),
         command=argv,
         task_files=tests,
-        base_files=_tree(directory / "fixtures", ""),
+        base_files=fixture_files(directory),
     )
+
+
+def fixture_files(directory: Path) -> dict[str, bytes]:
+    """The task's starting repository (`fixtures/`), keyed by path relative to its root."""
+    return _tree(directory / "fixtures", "")
 
 
 def _tree(root: Path, prefix: str) -> dict[str, bytes]:

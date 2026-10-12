@@ -7,3 +7,6 @@ __pycache__/
 
 # Claude Code local settings
 .claude/settings.local.json
+
+# Sidecar locks created beside editable provider/catalog YAML
+*.yaml.lock

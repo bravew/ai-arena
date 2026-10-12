@@ -6,10 +6,12 @@ import os
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
+from pathlib import Path
 from typing import Any, cast
 
 from arena.gateway.resolve import Target
 from arena.providers.config import ProviderKey, validate_credential_endpoint
+from arena.providers.credentials import CredentialError, credential_environment, environment_name
 from arena.providers.subscriptions import SubscriptionError, SubscriptionStore, sign_request
 
 
@@ -40,9 +42,13 @@ class EndpointResolver:
         self,
         *,
         subscriptions: SubscriptionStore | None = None,
+        home: Path | None = None,
+        environ: Mapping[str, str] | None = None,
         clock: Callable[[], datetime] = lambda: datetime.now(UTC),
     ) -> None:
         self.subscriptions = subscriptions
+        self.home = home if home is not None else Path.home() / ".arena"
+        self._environ = environ
         self.clock = clock
 
     def resolve(
@@ -85,7 +91,13 @@ class EndpointResolver:
             if not candidates:
                 raise ProviderEndpointError("provider has no API key candidate")
             raise ProviderEndpointError("provider candidate is ambiguous or unavailable")
-        api_key = os.environ.get(selected.env)
+        try:
+            environment = credential_environment(
+                self.home, os.environ if self._environ is None else self._environ, [selected.env]
+            )
+            api_key = environment.get(environment_name(selected.env))
+        except CredentialError:
+            raise ProviderEndpointError("provider credential store is unavailable") from None
         if not api_key:
             raise ProviderEndpointError("provider credential is unavailable")
         return ProviderEndpoint(protocol, base_url.rstrip("/"), selected.id, api_key)

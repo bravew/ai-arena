@@ -85,6 +85,7 @@ def models_command(
     write: Annotated[
         bool, typer.Option("--write", help="Append subscription entries to the catalog.")
     ] = False,
+    home: Annotated[Path | None, typer.Option("--home")] = None,
 ) -> None:
     """List a provider's models and propose catalog entries. Sends no model request."""
     try:
@@ -97,7 +98,7 @@ def models_command(
         typer.echo(f"error: no provider {provider_id!r} in {config}", err=True)
         raise typer.Exit(code=1)
     try:
-        models = discover_models(provider)
+        models = discover_models(provider, home=home)
         proposals = propose(provider, models, catalog)
     except (DiscoveryError, OSError, ValueError) as error:
         typer.echo(f"error: {error}", err=True)

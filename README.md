@@ -114,9 +114,40 @@ uv run arena doctor                                # Docker, gateway, providers,
 
 ### Add providers and compare their models
 
-Use `providers.yaml` for API providers and subscription accounts. API credentials
-are environment variables named in the provider file; subscription sign-ins are
-stored by `arena providers add` and are used by the vendor's own CLI. Automated
+Open **Providers** at `http://localhost:7400/providers` to add or edit providers,
+enter API keys, connect subscriptions, and manage their model catalog. Build the
+viewer before starting the server so it serves the current settings page:
+
+```sh
+pnpm -C web build
+uv run arena serve --home .arena --providers providers.yaml --catalog catalog/models.yaml
+```
+
+API keys entered in the UI are saved privately under `.arena/credentials`, with
+owner-only permissions. `providers.yaml` contains environment reference names,
+never key values. A nonempty environment value overrides a locally saved key;
+the page shows which source is active. Keys are write-only in the UI.
+
+If Claude or Codex is already signed in on this computer, Arena uses that
+sign-in as is, with no OAuth step, import or API key. On macOS the Claude
+sign-in is read from the Keychain only when a test or run needs it, and macOS
+may ask once to allow that. Only for a different account, open **Use a
+different account** and choose **Connect existing**, **Import macOS Keychain**
+or **Sign in**. New logins run the vendor CLI in
+an Arena-owned temporary home; follow the vendor link and enter the requested
+code. Cancelling or timing out cleans up that login. Disconnect removes only
+Arena's saved copy, leaving the CLI's own sign-in unchanged. These actions send
+no model request. **Test connection** is a separate action that uses model quota.
+
+Model discovery previews available IDs; select a model to save it. Claude has no
+checked model-list command, so enter its full model ID manually. API models need
+input/output prices and a price-source URL. Subscription models have unknown
+cost, with no invented token price.
+
+Use the same data home for a subsequent run (`--home .arena`) so it finds the
+accounts and keys saved by the UI. Settings writes and login are available only
+through the directly accessed local server; remote and exported viewers cannot
+change them. The CLI setup commands below remain available. Automated
 evaluation may count against a consumer plan and may breach its terms.
 
 ```sh
@@ -126,20 +157,39 @@ uv run arena providers add codex                # vendor login and register the 
 uv run arena providers add openai --env OPENAI_API_KEY
 uv run arena providers models openai-plus       # show models returned by the Codex CLI
 uv run arena providers test anthropic            # API connection test; sends a small request
-uv run arena run suites/smoke -c contestants/sets/providers-compare.yaml --budget-usd 5
+uv run arena run suites/smoke -c contestants/sets/providers-compare.yaml --home .arena --budget-usd 5
 ```
+
+The comparison set includes Claude Sonnet 5.5 through the Claude subscription,
+GPT-6.1-Sol through the ChatGPT subscription, and a separate metered Sonnet 4.5
+API contestant. Both subscription contestants use the vendor CLI with no scaffold.
 
 Review `contestants/sets/providers-compare.yaml` and the catalog prices before
 running. The budget limits metered API calls; subscription trials use each
 vendor's plan quota. Claude's CLI does not provide a checked model-list
 command, so its subscription model must be listed in the catalog by hand. The
 Claude model ref must use the subscription provider ID (`anthropic-max`), while
-the API-key models use `anthropic`. The Codex model list is read from `codex
+the API-key models use `anthropic`. Use the full vendor model ID after `/`,
+such as `anthropic-max/claude-sonnet-5-5`; it goes directly to `--model` without
+removing suffixes or resolving aliases. The Codex model list is read from `codex
 debug models`. Do not use `providers test` when you only want to confirm
 discovery: that command makes an opt-in test call.
 
 **Maintainer follow-up:** fold the decided provider/runtime and local-CLI
 subscription behavior into DEV_PLAN §5.8 and §6.2.
+
+
+#### Define contestants and run trials from the Providers page
+
+The **Run a comparison** panel on `/providers` covers the first two steps of a
+comparison. Pick subscription models and save them as a contestant set (no
+quota), choose a suite, set and repeat count, and preview the plan: the trial
+count and how many requests will use subscription quota. Start needs an explicit
+quota confirmation. The page runs the same `arena run` as the terminal, one run
+at a time, and shows the run id, a redacted log, Cancel, Resume, and links to
+Leaderboard, Trace and Live. API contestants and execution scoring that needs
+Docker keep using the CLI. Start the server from the repository root, or pass
+`--project-root`, so it finds `suites/` and `contestants/`.
 
 ### Metered agent runs
 

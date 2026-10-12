@@ -33,7 +33,9 @@ class CodexLocalAdapter:
             "--sandbox",
             "workspace-write",
             "--skip-git-repo-check",
-            "--ephemeral",
+            # No `--ephemeral`: it stops Codex writing the session record the runner reads to
+            # verify the served model. The record lands in the per-trial scratch home, which is
+            # deleted on every outcome.
             "--cd",
             str(workspace),
             "--model",

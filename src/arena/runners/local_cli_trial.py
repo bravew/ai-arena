@@ -22,11 +22,11 @@ from arena.core.store import Store
 from arena.gateway.classify import FailureClass
 from arena.gateway.rests import RestBook
 from arena.providers.accounts import account_label
+from arena.providers.accounts.probe import detect_account
 from arena.providers.config import Provider
 from arena.providers.runtimes import (
     RuntimeStatus,
     check_model,
-    detect_runtime,
     spec_for_vendor,
 )
 from arena.providers.runtimes.detect import find_binary
@@ -91,15 +91,21 @@ def preflight_local_cli(
     if spec is None:
         add("runtime", f"no vendor CLI is recorded for provider {provider.id}")
         return issues
-    report = detect_runtime(spec, environ)
+    error = sign_ins.error_for(spec.vendor)
+    if error is not None:
+        add("sign_in", f"{spec.runtime}: {error}")
+        return issues
+    try:
+        selected = sign_ins.for_vendor(spec.vendor)
+    except SignInError as error:
+        add("sign_in", f"{spec.runtime}: {error}")
+        return issues
+    report = detect_account(spec, selected, environ)
     if report.status is RuntimeStatus.OK:
         report = check_model(report, contestant.model.model, environ)
     if report.status is not RuntimeStatus.OK:
         hint = f" ({report.hint})" if report.hint else ""
         add(report.status.value, f"{spec.runtime}: {report.detail}{hint}")
-    error = sign_ins.error_for(spec.vendor)
-    if error is not None:
-        add("sign_in", f"{spec.runtime}: {error}")
     return issues
 
 
@@ -125,7 +131,12 @@ def _sign_in(shared: LocalCliRun, vendor: str, runtime: str) -> SignIn:
 
 
 async def execute_local_cli_trial(
-    job: TrialJob, run_id: str, shared: LocalCliRun, provider: Provider, prompt: str
+    job: TrialJob,
+    run_id: str,
+    shared: LocalCliRun,
+    provider: Provider,
+    prompt: str,
+    fixtures: Mapping[str, bytes] | None = None,
 ) -> CompletionResult:
     subscription = provider.subscription
     spec = spec_for_vendor(subscription.vendor) if subscription is not None else None
@@ -154,6 +165,7 @@ async def execute_local_cli_trial(
             timeout=shared.timeout,
             environ=shared.environ,
             scratch_base=shared.scratch_base,
+            fixtures=fixtures or {},
         )
     )
     if result.failure is FailureKind.LIMIT_REACHED:
